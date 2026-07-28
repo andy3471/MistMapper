@@ -1,0 +1,123 @@
+using SteamControllerBridge.Host.Services;
+using SteamControllerBridge.Host.UI;
+
+namespace SteamControllerBridge.Host;
+
+public sealed class TrayAppContext : ApplicationContext
+{
+    readonly NotifyIcon _tray;
+    readonly ProfileService _profiles;
+    readonly BridgeService _bridge;
+    readonly IpcServer _ipc;
+    readonly GameBarFileIpcService _gameBarIpc;
+    readonly SteamWatcher _steam;
+    readonly SessionWatcher _session;
+    RemapperForm? _remapper;
+
+    public TrayAppContext(bool openRemapperOnStart = false)
+    {
+        _profiles = new ProfileService();
+        _steam = new SteamWatcher();
+        _session = new SessionWatcher();
+        _bridge = new BridgeService(_profiles, _steam, _session);
+        _ipc = new IpcServer(_profiles, _bridge);
+        _gameBarIpc = new GameBarFileIpcService(_profiles, _bridge);
+
+        StartupRegistration.SetEnabled(_profiles.Document.StartWithWindows);
+        StartupRegistration.WriteFseHelperScript(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "SteamControllerBridge"));
+
+        _tray = new NotifyIcon
+        {
+            Visible = true,
+            Text = "Steam Controller Bridge",
+            Icon = SystemIcons.Application,
+            ContextMenuStrip = BuildMenu()
+        };
+        _tray.DoubleClick += (_, _) => OpenRemapper();
+
+        _bridge.StatusChanged += OnStatus;
+        _ipc.Start();
+        _bridge.Start();
+        OnStatus(_bridge.Status);
+
+        if (openRemapperOnStart)
+        {
+            // Defer until the message loop is running so forms have handles.
+            EventHandler? onIdle = null;
+            onIdle = (_, _) =>
+            {
+                Application.Idle -= onIdle!;
+                OpenRemapper();
+            };
+            Application.Idle += onIdle;
+        }
+    }
+
+    ContextMenuStrip BuildMenu()
+    {
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("Open remapper", null, (_, _) => OpenRemapper());
+        menu.Items.Add("Toggle bridge", null, (_, _) => _bridge.SetEnabled(!_profiles.BridgeEnabled));
+        menu.Items.Add(new ToolStripSeparator());
+        var startup = new ToolStripMenuItem("Start with Windows")
+        {
+            Checked = StartupRegistration.IsEnabled(),
+            CheckOnClick = true
+        };
+        startup.CheckedChanged += (_, _) => StartupRegistration.SetEnabled(startup.Checked);
+        menu.Items.Add(startup);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Exit", null, (_, _) => Exit());
+        return menu;
+    }
+
+    void OnStatus(Shared.BridgeStatus status)
+    {
+        try { _tray.Text = Truncate($"SC Bridge — {status.State}", 63); }
+        catch { /* ignore */ }
+    }
+
+    static string Truncate(string s, int max) =>
+        s.Length <= max ? s : s[..(max - 1)] + "…";
+
+    public void OpenRemapper()
+    {
+        if (_remapper is { IsDisposed: false })
+        {
+            _remapper.Activate();
+            return;
+        }
+        _remapper = new RemapperForm(_profiles, _bridge);
+        _remapper.FormClosed += (_, _) => _remapper = null;
+        _remapper.Show();
+    }
+
+    void Exit()
+    {
+        _tray.Visible = false;
+        _bridge.Dispose();
+        _ipc.Dispose();
+        _gameBarIpc.Dispose();
+        _steam.Dispose();
+        _session.Dispose();
+        _tray.Dispose();
+        ExitThread();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _tray.Visible = false;
+            _bridge.Dispose();
+            _ipc.Dispose();
+            _gameBarIpc.Dispose();
+            _steam.Dispose();
+            _session.Dispose();
+            _tray.Dispose();
+        }
+        base.Dispose(disposing);
+    }
+}

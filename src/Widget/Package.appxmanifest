@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Xbox Game Bar widget package stub.
+  Build/sideload with Visual Studio (UWP + Microsoft.Gaming.XboxGameBar).
+  The desktop remapper (SteamControllerBridge.Widget / Host --ui) uses the same IPC protocol.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  IgnorableNamespaces="uap uap3 desktop">
+
+  <Identity Name="SteamControllerBridge.GameBar"
+            Publisher="CN=SteamControllerBridge"
+            Version="0.1.0.0" />
+
+  <Properties>
+    <DisplayName>Steam Controller Bridge</DisplayName>
+    <PublisherDisplayName>Steam Controller Bridge</PublisherDisplayName>
+    <Description>Remap Steam Controller 2026 while bridged to Xbox input</Description>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Applications>
+    <Application Id="App" Executable="SteamControllerBridge.Widget.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="SC Bridge Remapper"
+        Description="Steam Controller Bridge remapper"
+        Square150x150Logo="Assets\StoreLogo.png"
+        Square44x44Logo="Assets\StoreLogo.png"
+        BackgroundColor="transparent" />
+
+      <Extensions>
+        <!-- Full-trust desktop remapper companion; Game Bar hosts a thin UWP view in a full VS package. -->
+        <uap3:Extension Category="windows.appExtension">
+          <uap3:AppExtension Name="com.microsoft.gamebar.presence"
+                             Id="SteamControllerBridgeWidget"
+                             DisplayName="SC Bridge"
+                             Description="Steam Controller remapper"
+                             PublicFolder="Public">
+            <uap3:Properties>
+              <GameBarWidget Type="Standard">
+                <HomeMenuVisible>true</HomeMenuVisible>
+                <PinningSupported>true</PinningSupported>
+                <Window>
+                  <Size>
+                    <Height>360</Height>
+                    <Width>480</Width>
+                    <MinHeight>280</MinHeight>
+                    <MinWidth>360</MinWidth>
+                  </Size>
+                </Window>
+              </GameBarWidget>
+            </uap3:Properties>
+          </uap3:AppExtension>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+</Package>

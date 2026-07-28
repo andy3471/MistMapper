@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="SteamControllerBridge.GameBarWidget.WidgetPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Background="#FF202024">
+
+    <ScrollViewer Padding="12">
+        <StackPanel>
+            <TextBlock x:Name="StatusText" Text="Connecting…" Foreground="#FFDDDDDD" TextWrapping="Wrap" Margin="0,0,0,8"/>
+            <ToggleSwitch x:Name="BridgeToggle" Header="Bridge enabled" OffContent="Off" OnContent="On"
+                          Toggled="BridgeToggle_Toggled" Margin="0,0,0,8"/>
+            <TextBlock Text="Profile" Foreground="#FFAAAAAA"/>
+            <ComboBox x:Name="ProfilesCombo" HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                      SelectionChanged="ProfilesCombo_SelectionChanged"/>
+            <TextBlock Text="Paddles" Foreground="#FFAAAAAA" Margin="0,8,0,4"/>
+            <Grid Margin="0,0,0,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="8"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <ComboBox x:Name="L4Combo" Grid.Row="0" Grid.Column="0" Header="L4" Tag="L4"
+                          HorizontalAlignment="Stretch" SelectionChanged="PaddleCombo_SelectionChanged"/>
+                <ComboBox x:Name="L5Combo" Grid.Row="0" Grid.Column="2" Header="L5" Tag="L5"
+                          HorizontalAlignment="Stretch" SelectionChanged="PaddleCombo_SelectionChanged"/>
+                <ComboBox x:Name="R4Combo" Grid.Row="2" Grid.Column="0" Header="R4" Tag="R4"
+                          HorizontalAlignment="Stretch" SelectionChanged="PaddleCombo_SelectionChanged"/>
+                <ComboBox x:Name="R5Combo" Grid.Row="2" Grid.Column="2" Header="R5" Tag="R5"
+                          HorizontalAlignment="Stretch" SelectionChanged="PaddleCombo_SelectionChanged"/>
+            </Grid>
+            <Button Content="Refresh" Click="RefreshButton_Click" HorizontalAlignment="Stretch"/>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

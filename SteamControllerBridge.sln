@@ -1,0 +1,48 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{11DD3B1C-D5EA-4B0C-BB2D-102066C170BF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SteamControllerBridge.Shared", "src\Shared\SteamControllerBridge.Shared.csproj", "{F13485E4-0291-4048-8E3C-628474AFE7F9}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SteamControllerBridge.Host", "src\Host\SteamControllerBridge.Host.csproj", "{8A52BAA0-738F-40BC-82D2-C4E4F968083E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SteamControllerBridge.Widget", "src\Widget\SteamControllerBridge.Widget.csproj", "{38E19A9E-973C-4F05-AAA2-92C3C6A0FB4D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SteamControllerBridge.FseHome", "src\FseHome\SteamControllerBridge.FseHome.csproj", "{500D862E-A1EC-49CC-9269-F3E17454AA3E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F13485E4-0291-4048-8E3C-628474AFE7F9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F13485E4-0291-4048-8E3C-628474AFE7F9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F13485E4-0291-4048-8E3C-628474AFE7F9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F13485E4-0291-4048-8E3C-628474AFE7F9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8A52BAA0-738F-40BC-82D2-C4E4F968083E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8A52BAA0-738F-40BC-82D2-C4E4F968083E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8A52BAA0-738F-40BC-82D2-C4E4F968083E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8A52BAA0-738F-40BC-82D2-C4E4F968083E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{38E19A9E-973C-4F05-AAA2-92C3C6A0FB4D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{38E19A9E-973C-4F05-AAA2-92C3C6A0FB4D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{38E19A9E-973C-4F05-AAA2-92C3C6A0FB4D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{38E19A9E-973C-4F05-AAA2-92C3C6A0FB4D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{500D862E-A1EC-49CC-9269-F3E17454AA3E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{500D862E-A1EC-49CC-9269-F3E17454AA3E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{500D862E-A1EC-49CC-9269-F3E17454AA3E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{500D862E-A1EC-49CC-9269-F3E17454AA3E}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{F13485E4-0291-4048-8E3C-628474AFE7F9} = {11DD3B1C-D5EA-4B0C-BB2D-102066C170BF}
+		{8A52BAA0-738F-40BC-82D2-C4E4F968083E} = {11DD3B1C-D5EA-4B0C-BB2D-102066C170BF}
+		{38E19A9E-973C-4F05-AAA2-92C3C6A0FB4D} = {11DD3B1C-D5EA-4B0C-BB2D-102066C170BF}
+		{500D862E-A1EC-49CC-9269-F3E17454AA3E} = {11DD3B1C-D5EA-4B0C-BB2D-102066C170BF}
+	EndGlobalSection
+EndGlobal
