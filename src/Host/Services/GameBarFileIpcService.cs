@@ -140,6 +140,11 @@ public sealed class GameBarFileIpcService : IDisposable
                 _bridge.SetEnabled(payload.Equals("true", StringComparison.OrdinalIgnoreCase) || payload == "1");
                 break;
 
+            case "setAutoPauseWhenSteam":
+                _profiles.AutoPauseWhenSteamRunning =
+                    payload.Equals("true", StringComparison.OrdinalIgnoreCase) || payload == "1";
+                break;
+
             case "setActiveProfileByName":
             {
                 var profile = _profiles.GetProfiles()
@@ -290,6 +295,8 @@ public sealed class GameBarFileIpcService : IDisposable
             writer.WriteStartObject();
             writer.WriteString("statusMessage", $"{status.State}: {status.Message}");
             writer.WriteBoolean("bridgeEnabled", status.BridgeEnabled);
+            writer.WriteBoolean("autoPauseWhenSteam", status.AutoPauseWhenSteamRunning);
+            writer.WriteBoolean("steamRunning", status.SteamRunning);
             writer.WriteString("activeProfileId", active.Id);
             writer.WriteString("activeProfileName", active.Name);
             writer.WriteString("activeProfileSource", status.ActiveProfileSource);

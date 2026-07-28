@@ -137,6 +137,17 @@ namespace SteamControllerBridge.GameBarWidget
                 await RefreshAsync(force: true);
         }
 
+        async void PauseSteamToggle_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (_suppress) return;
+            var enabled = PauseSteamToggle.IsOn ? "true" : "false";
+            var resp = await IpcClient.SendAsync("setAutoPauseWhenSteam", enabled);
+            if (!resp.IsOk)
+                StatusText.Text = resp.Error ?? "Failed to toggle Steam pause";
+            else
+                await RefreshAsync(force: true);
+        }
+
         async void ProfilesCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_suppress || !(ProfilesCombo.SelectedItem is string name)) return;
@@ -428,6 +439,7 @@ namespace SteamControllerBridge.GameBarWidget
             {
                 var status = state.GetNamedString("statusMessage", "Connected");
                 var bridgeOn = state.GetNamedBoolean("bridgeEnabled", true);
+                var pauseSteam = state.GetNamedBoolean("autoPauseWhenSteam", true);
                 _activeProfileId = state.GetNamedString("activeProfileId", "");
                 var activeName = state.GetNamedString("activeProfileName", "");
                 var game = state.GetNamedString("currentGameExe", "");
@@ -438,6 +450,7 @@ namespace SteamControllerBridge.GameBarWidget
                 var padOk = state.GetNamedBoolean("controllerConnected", false);
 
                 BridgeToggle.IsOn = bridgeOn;
+                PauseSteamToggle.IsOn = pauseSteam;
                 StatusText.Text = status;
                 GameText.Text = string.IsNullOrEmpty(game)
                     ? "No foreground game · profile source: " + source

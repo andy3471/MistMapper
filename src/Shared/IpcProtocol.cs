@@ -42,6 +42,7 @@ public static class IpcCommands
     public const string RemapButton = "remapButton";
     public const string RemapAction = "remapAction";
     public const string SetBridgeEnabled = "setBridgeEnabled";
+    public const string SetAutoPauseWhenSteam = "setAutoPauseWhenSteam";
     public const string SetTrackpadMode = "setTrackpadMode";
     public const string SetGyroMode = "setGyroMode";
     public const string BindProfileToGame = "bindProfileToGame";
@@ -69,6 +70,11 @@ public sealed class SetActiveProfilePayload
 }
 
 public sealed class SetBridgeEnabledPayload
+{
+    public bool Enabled { get; set; }
+}
+
+public sealed class SetAutoPauseWhenSteamPayload
 {
     public bool Enabled { get; set; }
 }

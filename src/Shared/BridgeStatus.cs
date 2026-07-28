@@ -24,6 +24,8 @@ public sealed class BridgeStatus
 {
     public BridgeRunState State { get; set; } = BridgeRunState.Stopped;
     public bool BridgeEnabled { get; set; }
+    /// <summary>When true, bridge pauses while Steam.exe is running.</summary>
+    public bool AutoPauseWhenSteamRunning { get; set; } = true;
     public bool ControllerConnected { get; set; }
     public bool SteamRunning { get; set; }
     public bool SessionLocked { get; set; }

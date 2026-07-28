@@ -21,6 +21,10 @@
                               Toggled="BridgeToggle_Toggled" VerticalAlignment="Center"/>
             </Grid>
 
+            <ToggleSwitch x:Name="PauseSteamToggle" Header="Pause when Steam is running"
+                          OffContent="Off" OnContent="On" Margin="0,0,0,10"
+                          Toggled="PauseSteamToggle_Toggled"/>
+
             <Border x:Name="DepBanner" Background="#FF4A1A1A" BorderBrush="#FF8B3A3A" BorderThickness="1"
                     Padding="10,8" CornerRadius="6" Margin="0,0,0,10" Visibility="Collapsed">
                 <TextBlock x:Name="DepBannerText" Text="" Foreground="#FFFFD0D0" TextWrapping="Wrap" FontSize="12"/>

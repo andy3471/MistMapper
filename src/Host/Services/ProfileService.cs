@@ -55,6 +55,16 @@ public sealed class ProfileService
     public bool AutoPauseWhenSteamRunning
     {
         get { lock (_lock) return _doc.AutoPauseWhenSteamRunning; }
+        set
+        {
+            lock (_lock)
+            {
+                if (_doc.AutoPauseWhenSteamRunning == value) return;
+                _doc.AutoPauseWhenSteamRunning = value;
+                SaveUnlocked();
+            }
+            Changed?.Invoke();
+        }
     }
 
     public IReadOnlyList<ControllerProfile> GetProfiles()

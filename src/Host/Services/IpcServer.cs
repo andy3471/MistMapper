@@ -160,6 +160,14 @@ public sealed class IpcServer : IDisposable
                 break;
             }
 
+            case IpcCommands.SetAutoPauseWhenSteam:
+            {
+                var p = Deserialize<SetAutoPauseWhenSteamPayload>(request.Payload);
+                _profiles.AutoPauseWhenSteamRunning = p.Enabled;
+                response.Payload = JsonSerializer.SerializeToElement(_bridge.Status, IpcProtocol.JsonOptions);
+                break;
+            }
+
             case IpcCommands.SetTrackpadMode:
             {
                 var p = Deserialize<SetTrackpadModePayload>(request.Payload);

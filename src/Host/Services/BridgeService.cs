@@ -403,6 +403,7 @@ public sealed class BridgeService : IDisposable
             if (state.HasValue) _status.State = state.Value;
             if (message is not null) _status.Message = message;
             _status.BridgeEnabled = _profiles.BridgeEnabled;
+            _status.AutoPauseWhenSteamRunning = _profiles.AutoPauseWhenSteamRunning;
             _status.ControllerConnected = _activeDriver?.IsConnected == true;
             _status.SteamRunning = _steam.IsSteamRunning;
             _status.SessionLocked = _session.IsLocked;
@@ -439,6 +440,7 @@ public sealed class BridgeService : IDisposable
     {
         State = s.State,
         BridgeEnabled = s.BridgeEnabled,
+        AutoPauseWhenSteamRunning = s.AutoPauseWhenSteamRunning,
         ControllerConnected = s.ControllerConnected,
         SteamRunning = s.SteamRunning,
         SessionLocked = s.SessionLocked,

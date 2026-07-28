@@ -60,6 +60,18 @@ public sealed class TrayAppContext : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.Add("Status…", null, (_, _) => OpenRemapper());
         menu.Items.Add("Toggle bridge", null, (_, _) => _bridge.SetEnabled(!_profiles.BridgeEnabled));
+        var pauseSteam = new ToolStripMenuItem("Pause when Steam is running")
+        {
+            Checked = _profiles.AutoPauseWhenSteamRunning,
+            CheckOnClick = true
+        };
+        pauseSteam.CheckedChanged += (_, _) =>
+            _profiles.AutoPauseWhenSteamRunning = pauseSteam.Checked;
+        menu.Items.Add(pauseSteam);
+        menu.Opening += (_, _) =>
+        {
+            pauseSteam.Checked = _profiles.AutoPauseWhenSteamRunning;
+        };
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Remap in Game Bar (Win+G)", null, (_, _) =>
         {
