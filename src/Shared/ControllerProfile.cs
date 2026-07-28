@@ -6,7 +6,21 @@ public sealed class ControllerProfile
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = "Default";
-    public Dictionary<string, string> ButtonMap { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public string DriverId { get; set; } = DriverIds.SteamController;
+
+    /// <summary>Official template id when created from <see cref="OfficialLayouts"/>.</summary>
+    public string? LayoutId { get; set; }
+
+    /// <summary>True for stock official profiles seeded by the app.</summary>
+    public bool IsOfficial { get; set; }
+
+    /// <summary>Input id → action. Preferred mapping store.</summary>
+    public Dictionary<string, OutputAction> InputMap { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Legacy Xbox-only map; migrated into <see cref="InputMap"/> on load.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Dictionary<string, string>? ButtonMap { get; set; }
+
     public TrackpadMode LeftTrackpad { get; set; } = TrackpadMode.Off;
     public TrackpadMode RightTrackpad { get; set; } = TrackpadMode.Off;
     public GyroMode Gyro { get; set; } = GyroMode.Off;
@@ -16,20 +30,19 @@ public sealed class ControllerProfile
 
     public static ControllerProfile CreateDefault()
     {
-        var p = new ControllerProfile { Name = "Default Xbox" };
+        var p = new ControllerProfile
+        {
+            Name = "Gamepad",
+            DriverId = DriverIds.SteamController,
+            LayoutId = OfficialLayouts.Gamepad,
+            IsOfficial = true
+        };
         foreach (var (src, dst) in DefaultButtonPairs)
-            p.ButtonMap[src.ToString()] = dst.ToString();
+            p.InputMap[src.ToString()] = OutputAction.FromXbox(dst);
         return p;
     }
 
-    public static ControllerProfile CreateDesktop()
-    {
-        var p = CreateDefault();
-        p.Id = Guid.NewGuid().ToString("N");
-        p.Name = "Desktop (right pad mouse)";
-        p.RightTrackpad = TrackpadMode.AsMouse;
-        return p;
-    }
+    public static ControllerProfile CreateDesktop() => OfficialLayouts.CreateDesktop();
 
     [JsonIgnore]
     public static readonly (PhysicalInput Src, XboxOutput Dst)[] DefaultButtonPairs =
@@ -61,27 +74,76 @@ public sealed class ControllerProfile
         (PhysicalInput.RightTrackpadClick, XboxOutput.RsClick),
     ];
 
-    public XboxOutput MapButton(PhysicalInput input)
+    public void MigrateLegacyButtonMap()
     {
-        if (ButtonMap.TryGetValue(input.ToString(), out var name) &&
-            Enum.TryParse<XboxOutput>(name, true, out var output))
-            return output;
-        return XboxOutput.None;
+        if (string.IsNullOrWhiteSpace(DriverId))
+            DriverId = DriverIds.SteamController;
+
+        if (ButtonMap is { Count: > 0 })
+        {
+            foreach (var (key, value) in ButtonMap)
+            {
+                if (InputMap.ContainsKey(key)) continue;
+                if (Enum.TryParse<XboxOutput>(value, true, out var xbox))
+                    InputMap[key] = OutputAction.FromXbox(xbox);
+            }
+            ButtonMap = null;
+        }
+
+        // Normalize dictionary comparer after deserialize
+        if (InputMap.Comparer != StringComparer.OrdinalIgnoreCase)
+            InputMap = new Dictionary<string, OutputAction>(InputMap, StringComparer.OrdinalIgnoreCase);
+
+        EnsureLockedMappings();
     }
 
-    public void SetButton(PhysicalInput input, XboxOutput output)
+    public OutputAction GetAction(string inputId)
     {
-        if (output == XboxOutput.None)
-            ButtonMap.Remove(input.ToString());
-        else
-            ButtonMap[input.ToString()] = output.ToString();
+        if (MappingLocks.IsLockedGuideInput(inputId))
+            return MappingLocks.LockedGuideAction;
+
+        if (InputMap.TryGetValue(inputId, out var action) && action is not null)
+            return action;
+        return OutputAction.None();
     }
+
+    public OutputAction GetAction(PhysicalInput input) => GetAction(input.ToString());
+
+    public XboxOutput MapButton(PhysicalInput input)
+    {
+        var a = GetAction(input);
+        return a.Kind == OutputActionKind.Xbox ? a.Xbox : XboxOutput.None;
+    }
+
+    public void SetAction(string inputId, OutputAction action)
+    {
+        if (MappingLocks.IsLockedGuideInput(inputId))
+        {
+            InputMap[MappingLocks.SteamInputId] = MappingLocks.LockedGuideAction;
+            return;
+        }
+
+        if (action.Kind == OutputActionKind.None)
+            InputMap.Remove(inputId);
+        else
+            InputMap[inputId] = action;
+    }
+
+    /// <summary>Ensures Steam is always mapped to Xbox Guide in persisted profiles.</summary>
+    public void EnsureLockedMappings()
+    {
+        InputMap[MappingLocks.SteamInputId] = MappingLocks.LockedGuideAction;
+    }
+
+    public void SetButton(PhysicalInput input, XboxOutput output) =>
+        SetAction(input.ToString(), OutputAction.FromXbox(output));
 }
 
 public sealed class ProfileStoreDocument
 {
     public string ActiveProfileId { get; set; } = "";
     public List<ControllerProfile> Profiles { get; set; } = [];
+    public List<ProfileBinding> ProfileBindings { get; set; } = [];
     public bool BridgeEnabled { get; set; } = true;
     public bool AutoPauseWhenSteamRunning { get; set; } = true;
     public bool StartWithWindows { get; set; } = true;

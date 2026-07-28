@@ -58,8 +58,18 @@ public sealed class TrayAppContext : ApplicationContext
     ContextMenuStrip BuildMenu()
     {
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Open remapper", null, (_, _) => OpenRemapper());
+        menu.Items.Add("Status…", null, (_, _) => OpenRemapper());
         menu.Items.Add("Toggle bridge", null, (_, _) => _bridge.SetEnabled(!_profiles.BridgeEnabled));
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Remap in Game Bar (Win+G)", null, (_, _) =>
+        {
+            MessageBox.Show(
+                "Press Win+G, open the Widgets menu, and pin SC Bridge.\n" +
+                "All remapping happens in that widget.",
+                "SC Bridge",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        });
         menu.Items.Add(new ToolStripSeparator());
         var startup = new ToolStripMenuItem("Start with Windows")
         {
@@ -75,7 +85,25 @@ public sealed class TrayAppContext : ApplicationContext
 
     void OnStatus(Shared.BridgeStatus status)
     {
-        try { _tray.Text = Truncate($"SC Bridge — {status.State}", 63); }
+        try
+        {
+            var viiper = status.Dependencies.FirstOrDefault(d => d.Id == "viiper");
+            var tip = status.State == Shared.BridgeRunState.Error && viiper is { Ok: false }
+                ? $"SC Bridge — VIIPER missing"
+                : $"SC Bridge — {status.State}";
+            _tray.Text = Truncate(tip, 63);
+            _tray.Icon = status.State == Shared.BridgeRunState.Error
+                ? SystemIcons.Error
+                : SystemIcons.Application;
+
+            if (_bridge.ConsumeViiperDownNotification())
+            {
+                _tray.BalloonTipTitle = "VIIPER required";
+                _tray.BalloonTipText = viiper?.Detail ?? status.Message;
+                _tray.BalloonTipIcon = ToolTipIcon.Error;
+                _tray.ShowBalloonTip(5000);
+            }
+        }
         catch { /* ignore */ }
     }
 

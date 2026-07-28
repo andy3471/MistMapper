@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using SteamControllerBridge.Shared;
 
 namespace SteamControllerBridge.Host.Mapping;
 
@@ -10,6 +11,8 @@ public static class MouseInjector
     const uint MouseLeftUp = 0x0004;
     const uint MouseRightDown = 0x0008;
     const uint MouseRightUp = 0x0010;
+    const uint MouseMiddleDown = 0x0020;
+    const uint MouseMiddleUp = 0x0040;
 
     [StructLayout(LayoutKind.Sequential)]
     struct Input
@@ -43,10 +46,23 @@ public static class MouseInjector
         SendInput(1, [input], Marshal.SizeOf<Input>());
     }
 
+    public static void SetButton(MouseButtonOutput button, bool down)
+    {
+        uint flags = button switch
+        {
+            MouseButtonOutput.Left => down ? MouseLeftDown : MouseLeftUp,
+            MouseButtonOutput.Right => down ? MouseRightDown : MouseRightUp,
+            MouseButtonOutput.Middle => down ? MouseMiddleDown : MouseMiddleUp,
+            _ => 0
+        };
+        if (flags == 0) return;
+        var input = new Input { Type = InputMouse, Mi = new MouseInput { Flags = flags } };
+        SendInput(1, [input], Marshal.SizeOf<Input>());
+    }
+
     public static void LeftClick()
     {
-        var down = new Input { Type = InputMouse, Mi = new MouseInput { Flags = MouseLeftDown } };
-        var up = new Input { Type = InputMouse, Mi = new MouseInput { Flags = MouseLeftUp } };
-        SendInput(2, [down, up], Marshal.SizeOf<Input>());
+        SetButton(MouseButtonOutput.Left, true);
+        SetButton(MouseButtonOutput.Left, false);
     }
 }

@@ -101,14 +101,20 @@ public sealed class IpcServer : IDisposable
                 response.Payload = JsonSerializer.SerializeToElement(new ProfilesPayload
                 {
                     ActiveProfileId = _profiles.Document.ActiveProfileId,
-                    Profiles = _profiles.GetProfiles().ToList()
+                    Profiles = _profiles.GetProfiles().ToList(),
+                    ProfileBindings = _profiles.GetBindings().ToList()
                 }, IpcProtocol.JsonOptions);
+                break;
+
+            case IpcCommands.GetDriverCapabilities:
+                response.Payload = JsonSerializer.SerializeToElement(
+                    _bridge.Drivers.GetCapabilities(), IpcProtocol.JsonOptions);
                 break;
 
             case IpcCommands.SetActiveProfile:
             {
                 var p = Deserialize<SetActiveProfilePayload>(request.Payload);
-                _profiles.SetActiveProfile(p.ProfileId);
+                _bridge.SetActiveProfileManual(p.ProfileId);
                 response.Payload = JsonSerializer.SerializeToElement(_bridge.Status, IpcProtocol.JsonOptions);
                 break;
             }
@@ -139,6 +145,13 @@ public sealed class IpcServer : IDisposable
                 break;
             }
 
+            case IpcCommands.RemapAction:
+            {
+                var p = Deserialize<RemapActionPayload>(request.Payload);
+                _profiles.RemapAction(p.ProfileId, p.InputId, p.Action ?? OutputAction.None());
+                break;
+            }
+
             case IpcCommands.SetBridgeEnabled:
             {
                 var p = Deserialize<SetBridgeEnabledPayload>(request.Payload);
@@ -153,6 +166,22 @@ public sealed class IpcServer : IDisposable
                 if (!Enum.TryParse<TrackpadMode>(p.Mode, true, out var mode))
                     throw new ArgumentException("Invalid trackpad mode");
                 _profiles.SetTrackpad(p.ProfileId, p.Left, mode);
+                break;
+            }
+
+            case IpcCommands.SetGyroMode:
+            {
+                var p = Deserialize<SetGyroModePayload>(request.Payload);
+                if (!Enum.TryParse<GyroMode>(p.Mode, true, out var mode))
+                    throw new ArgumentException("Invalid gyro mode");
+                _profiles.SetGyro(p.ProfileId, mode, p.Sensitivity);
+                break;
+            }
+
+            case IpcCommands.BindProfileToGame:
+            {
+                var p = Deserialize<BindProfileToGamePayload>(request.Payload);
+                _profiles.BindToGame(p.ProfileId, p.MatchExe, p.MatchPathContains, p.DisplayName);
                 break;
             }
 

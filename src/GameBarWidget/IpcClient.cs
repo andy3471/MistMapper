@@ -18,20 +18,45 @@ namespace SteamControllerBridge.GameBarWidget
     static class IpcClient
     {
         const string StateFileName = "widget-state.json";
+        const string HeartbeatFileName = "widget-heartbeat.txt";
         const string RequestFileName = "widget-request.txt";
         const string ResponseFileName = "widget-response.txt";
 
-        public static async Task<string> ReadStateAsync()
+        public static async Task TouchHeartbeatAsync()
         {
             try
             {
-                var file = await ApplicationData.Current.LocalFolder.GetFileAsync(StateFileName);
-                return await FileIO.ReadTextAsync(file);
+                var folder = ApplicationData.Current.LocalFolder;
+                var file = await folder.CreateFileAsync(HeartbeatFileName, CreationCollisionOption.ReplaceExisting);
+                await FileIO.WriteTextAsync(file, DateTime.UtcNow.Ticks.ToString());
             }
             catch
             {
-                return null;
+                // ignore — host falls back to GameBar process watch
             }
+        }
+
+        public static async Task<string> ReadStateAsync()
+        {
+            // Retry: host atomically replaces the file; a single failed read must not mean "offline".
+            for (int attempt = 0; attempt < 4; ++attempt)
+            {
+                try
+                {
+                    var file = await ApplicationData.Current.LocalFolder.GetFileAsync(StateFileName);
+                    var text = await FileIO.ReadTextAsync(file);
+                    if (!string.IsNullOrWhiteSpace(text) && text.IndexOf('{') >= 0)
+                        return text;
+                }
+                catch
+                {
+                    // retry
+                }
+
+                await Task.Delay(40 + attempt * 30);
+            }
+
+            return null;
         }
 
         public static async Task<BridgeResponse> SendAsync(string command, string payload = "")

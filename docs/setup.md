@@ -3,21 +3,52 @@
 ## 1. usbip-win2
 
 1. Download the latest release from https://github.com/vadimgrn/usbip-win2  
-2. Install the signed driver package (admin).  
-3. Confirm `usbip.exe` is on `PATH`.
-
-## 2. VIIPER
-
-1. Download https://github.com/Alia5/VIIPER/releases  
-2. Start the server:
+   (e.g. `USBip-0.9.7.8-x64.exe`) and install it.  
+2. Confirm `C:\Program Files\USBip\usbip.exe` exists.  
+3. Ensure that folder is on your **PATH** (the installer usually does this; if VIIPER says `usbip: executable file not found`, add it manually and **restart VIIPER**).
 
 ```powershell
+[Environment]::SetEnvironmentVariable(
+  "Path",
+  $env:Path + ";C:\Program Files\USBip",
+  "User")
+```
+
+Open a **new** terminal afterward, or restart `viiper server`.
+
+## 2. VIIPER (required)
+
+VIIPER is **GPL-3.0** ([Alia5/VIIPER](https://github.com/Alia5/VIIPER)). This repo does **not** ship the binary; use the helper to download the official Windows build into `%LocalAppData%\VIIPER`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-viiper.ps1 -Start -AddToUserPath
+```
+
+Or start manually:
+
+```powershell
+& "$env:LOCALAPPDATA\VIIPER\viiper.exe" server
+# or, if on PATH:
 viiper server
 ```
 
-Default ports: USBIP `3241`, API `3242`. Localhost clients attach automatically when usbip-win2 is healthy.
+Default ports: USBIP `3241`, API `3242`.
 
-Keep VIIPER running while you play, or install it as a Windows service if your VIIPER build supports that.
+The host probes `:3242` and, if down, attempts to launch the local install automatically. You still need **usbip-win2** for virtual pads to appear to games.
+
+If setup fails, the host surfaces a red banner / tray error. Typical cases:
+
+| Message | Fix |
+|---------|-----|
+| VIIPER unavailable / connection refused | `install-viiper.ps1 -Start` |
+| `usbip: executable file not found` | Install usbip-win2, put `usbip.exe` on PATH, restart VIIPER |
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-usbip-win2.ps1 -LaunchInstaller
+powershell -ExecutionPolicy Bypass -File .\scripts\install-viiper.ps1 -Start
+```
+
+Keep VIIPER running while you play (the install script starts it minimized).
 
 ## 3. Host app
 
@@ -28,11 +59,29 @@ dotnet publish src\Host\SteamControllerBridge.Host.csproj -c Release -r win-x64 
 
 Tray menu:
 
-- **Open remapper** — full button/paddle/trackpad mapping UI  
-- **Toggle bridge** — enable/disable Steamless bridging  
-- **Start with Windows** — HKCU Run registration (Path 1 baseline)
+- **Status…** — bridge status / VIIPER errors (no remapping UI)  
+- **Remap in Game Bar (Win+G)** — opens help for the widget remapper  
+- **Toggle bridge** / **Start with Windows**
+
+All remapping (Xbox / keyboard / mouse, trackpads, gyro, per-game bind) is done in the **Game Bar widget**.
 
 Profiles live in `%AppData%\SteamControllerBridge\profiles.json`.
+
+### Drivers
+
+The host uses a pluggable **driver** model. v1 ships **Steam Controller** only (`steam-controller`). The bridge opens the first connected driver, maps an `InputFrame` through the active profile, and sends output to VIIPER / keyboard / mouse sinks.
+
+### Per-game profiles
+
+1. Select a profile in the remapper or Game Bar.  
+2. Focus the game window.  
+3. Click **Bind profile to current game**.  
+
+The host matches the foreground process **exe name** (optional path contains). Manual profile picks stay sticky until the foreground process changes.
+
+### Keyboard mapping notes
+
+Keyboard injection uses `SendInput`. Some elevated games may not receive injected keys unless the host runs elevated too. Virtual Xbox output via VIIPER does not have that limitation.
 
 ## 4. Xbox mode / FSE startup (Path 1 — default)
 
@@ -67,8 +116,6 @@ If you use [AnyFSE](https://github.com/ashpynov/AnyFSE) as the FSE home app:
 
 To appear as a selectable FSE home app you must package it as a sideloaded MSIX with the community `gamingHome` capability (same approach as AnyFSE). This is unofficial and can break on Windows updates — prefer Path 1/2 unless Path 1 fails on your device.
 
-Stub package notes live beside the Widget manifest; full MSIX signing is left to your packaging pipeline.
-
 ## 5. Remapper / Game Bar widget
 
 ### Desktop companion (always available)
@@ -79,7 +126,7 @@ Stub package notes live beside the Widget manifest; full MSIX signing is left to
 
 Or use Host tray → **Open remapper**. Talks over named pipe `SteamControllerBridge.Ipc`.
 
-### Game Bar widget (Win+G) — real UWP package
+### Game Bar widget (Win+G) — visual controller map
 
 Project: [`src/GameBarWidget`](../src/GameBarWidget)  
 Installer scripts: `scripts\build-gamebar-widget.ps1` + staged `Install-GameBarWidget.cmd`
@@ -107,18 +154,11 @@ cd .\publish\GameBarWidget
 .\Install-GameBarWidget.cmd
 ```
 
-The installer:
-
-1. Enables Developer Mode / sideload trust flags  
-2. Imports the widget certificate into **Trusted People**  
-3. Runs `Add-AppDevPackage.ps1 -Force`  
-4. Restarts Game Bar processes  
-
 **Use it**
 
 1. Start `SteamControllerBridge.exe` (tray) — required for remaps  
 2. Press **Win+G** → Widgets menu → pin **SC Bridge**  
-3. Toggle bridge, switch profiles, remap L4/L5/R4/R5  
+3. Use the visual map (tap controls), status chips, profile/game bind, trackpad/gyro modes  
 
 IPC: the widget writes requests into its package `LocalState`; the host watches `%LocalAppData%\Packages\SteamControllerBridge.GameBar_*\LocalState\`.
 
@@ -140,18 +180,24 @@ Native Windows **gamepad PIN** login expects a real Xbox-class pad present at Lo
 
 | Symptom | Check |
 |---------|--------|
-| `VIIPER unavailable` | `viiper server` running? usbip-win2 installed? port 3242 free? |
+| `VIIPER unavailable` / red banner | `viiper server` running? usbip-win2 installed? port 3242 free? |
 | Waiting for controller | USB/Puck connected? Steam fully exited? |
 | Double input | Close Steam; only one bridge tool at a time |
 | No pad in FSE | Startup set to **Start at log in**; try Path 2 |
 | Lock screen no mouse | Ensure host restored lizard (status `PausedLocked`) |
+| Keyboard binds ignored in game | Try elevating the host; pad binds via VIIPER are preferred for games |
+| Per-game profile not switching | Bind while the game is focused; ignored shells (Game Bar, etc.) |
 
 ## Architecture
 
 ```
-Steam Controller HID ──► Host (map profiles) ──► VIIPER xbox360 ──► Games
+SteamControllerDriver ──► InputFrame ──► MappingEngine ──► VIIPER / keyboard / mouse
                               ▲
-                     named pipe IPC
+                     active profile (+ per-game rules)
+                              ▲
+                     named pipe / file IPC
                               │
-              Widget / Remapper / (future Game Bar UWP)
+              Remapper / Game Bar visual map
 ```
+
+Future controllers add another `IControllerDriver`; mapping and UI consume driver capabilities + layout metadata.

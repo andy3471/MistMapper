@@ -3,38 +3,161 @@
     x:Class="SteamControllerBridge.GameBarWidget.WidgetPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Background="#FF202024">
+    Background="#FF12141A">
 
-    <ScrollViewer Padding="12">
+    <ScrollViewer Padding="10" VerticalScrollBarVisibility="Auto">
         <StackPanel>
-            <TextBlock x:Name="StatusText" Text="Connecting…" Foreground="#FFDDDDDD" TextWrapping="Wrap" Margin="0,0,0,8"/>
-            <ToggleSwitch x:Name="BridgeToggle" Header="Bridge enabled" OffContent="Off" OnContent="On"
-                          Toggled="BridgeToggle_Toggled" Margin="0,0,0,8"/>
-            <TextBlock Text="Profile" Foreground="#FFAAAAAA"/>
-            <ComboBox x:Name="ProfilesCombo" HorizontalAlignment="Stretch" Margin="0,0,0,8"
-                      SelectionChanged="ProfilesCombo_SelectionChanged"/>
-            <TextBlock Text="Paddles" Foreground="#FFAAAAAA" Margin="0,8,0,4"/>
+            <!-- Brand + status chips -->
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="SC Bridge" FontSize="22" FontWeight="SemiBold" Foreground="#FFF2F4F8"/>
+                    <TextBlock x:Name="StatusText" Text="Connecting…" Foreground="#FF98A0AE" TextWrapping="Wrap" FontSize="12"/>
+                </StackPanel>
+                <ToggleSwitch x:Name="BridgeToggle" Grid.Column="1" OffContent="Off" OnContent="On"
+                              Toggled="BridgeToggle_Toggled" VerticalAlignment="Center"/>
+            </Grid>
+
+            <Border x:Name="DepBanner" Background="#FF4A1A1A" BorderBrush="#FF8B3A3A" BorderThickness="1"
+                    Padding="10,8" CornerRadius="6" Margin="0,0,0,10" Visibility="Collapsed">
+                <TextBlock x:Name="DepBannerText" Text="" Foreground="#FFFFD0D0" TextWrapping="Wrap" FontSize="12"/>
+            </Border>
+
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Border x:Name="ChipHost" Grid.Column="0" Background="#FF1E222B" CornerRadius="6" Padding="8,6">
+                    <TextBlock x:Name="ChipHostText" Text="Host" Foreground="#FFB8C0CC" FontSize="11" TextAlignment="Center"/>
+                </Border>
+                <Border x:Name="ChipViiper" Grid.Column="2" Background="#FF1E222B" CornerRadius="6" Padding="8,6">
+                    <TextBlock x:Name="ChipViiperText" Text="VIIPER" Foreground="#FFB8C0CC" FontSize="11" TextAlignment="Center"/>
+                </Border>
+                <Border x:Name="ChipPad" Grid.Column="4" Background="#FF1E222B" CornerRadius="6" Padding="8,6">
+                    <TextBlock x:Name="ChipPadText" Text="Pad" Foreground="#FFB8C0CC" FontSize="11" TextAlignment="Center"/>
+                </Border>
+            </Grid>
+
+            <TextBlock x:Name="GameText" Text="" Foreground="#FF8B93A3" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8"/>
+
+            <Border x:Name="OverrideBanner" Background="#FF1A2A3A" BorderBrush="#FF3D7EA6" BorderThickness="1"
+                    Padding="10,8" CornerRadius="6" Margin="0,0,0,10" Visibility="Collapsed">
+                <TextBlock x:Name="OverrideBannerText"
+                           Text="Runtime: Xbox Gamepad while Game Bar is open (map below shows your profile)."
+                           Foreground="#FFB8D8F0" TextWrapping="Wrap" FontSize="12"/>
+            </Border>
+            <Grid Margin="0,0,0,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <ComboBox x:Name="ProfilesCombo" Header="Profile" HorizontalAlignment="Stretch"
+                          SelectionChanged="ProfilesCombo_SelectionChanged"/>
+                <Button Grid.Column="2" Content="Bind to game" Click="BindGame_Click"
+                        VerticalAlignment="Bottom" Padding="12,6"/>
+            </Grid>
+
+            <Grid Margin="0,0,0,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="6"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="6"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="6"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Content="New…" Click="NewProfile_Click" Padding="6,4"/>
+                <Button Grid.Column="2" Content="Duplicate" Click="DuplicateProfile_Click" Padding="6,4"/>
+                <Button Grid.Column="4" Content="Rename" Click="RenameProfile_Click" Padding="6,4"/>
+                <Button Grid.Column="6" Content="Delete" Click="DeleteProfile_Click" Padding="6,4"/>
+            </Grid>
+
+            <ComboBox x:Name="LayoutsCombo" Header="Official layouts (Steam Input–style)"
+                      Margin="0,0,0,8" SelectionChanged="LayoutsCombo_SelectionChanged"/>
+
+            <!-- Controller map -->
+            <Border Background="#FF1A1E27" BorderBrush="#FF2E3440" BorderThickness="1" CornerRadius="10" Height="300" Margin="0,0,0,8">
+                <Grid>
+                    <Canvas x:Name="ControllerCanvas" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+                    <TextBlock Text="Tap a control to remap" HorizontalAlignment="Left" VerticalAlignment="Top"
+                               Margin="12,8,0,0" Foreground="#FF6E7686" FontSize="11"/>
+                </Grid>
+            </Border>
+
+            <!-- Editor panel -->
+            <Border x:Name="ActionPanel" Background="#FF1A1E27" BorderBrush="#FF3D7EA6" BorderThickness="1"
+                    CornerRadius="10" Padding="12" Margin="0,0,0,8" Visibility="Collapsed">
+                <StackPanel>
+                    <TextBlock x:Name="SelectedInputText" FontSize="16" FontWeight="SemiBold" Foreground="#FFF2F4F8"/>
+                    <TextBlock x:Name="SelectedMappedText" Foreground="#FF8EC8F0" Margin="0,2,0,10" FontSize="12"/>
+
+                    <TextBlock x:Name="LockedHintText" Text="Locked to Xbox Guide — cannot be remapped."
+                               Foreground="#FFFFC978" FontSize="12" Margin="0,0,0,8" Visibility="Collapsed"
+                               TextWrapping="Wrap"/>
+
+                    <StackPanel x:Name="RemapEditorPanel">
+                        <TextBlock Text="Output type" Foreground="#FF8B93A3" FontSize="11" Margin="0,0,0,4"/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="6"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="6"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="6"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="KindXboxBtn" Grid.Column="0" Content="Xbox" Click="KindButton_Click" Tag="Xbox"/>
+                            <Button x:Name="KindKeyBtn" Grid.Column="2" Content="Key" Click="KindButton_Click" Tag="Key"/>
+                            <Button x:Name="KindMouseBtn" Grid.Column="4" Content="Mouse" Click="KindButton_Click" Tag="Mouse"/>
+                            <Button x:Name="KindNoneBtn" Grid.Column="6" Content="None" Click="KindButton_Click" Tag="None"/>
+                        </Grid>
+
+                        <ComboBox x:Name="ActionValueCombo" Header="Xbox / mouse target" Margin="0,0,0,6"
+                                  Visibility="Visible"/>
+                        <TextBox x:Name="KeyValueBox" Header="Key (A, Space, Ctrl+F)" Margin="0,0,0,6" Visibility="Collapsed"/>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                        <Button x:Name="ApplyActionBtn" Content="Apply" Click="ApplyAction_Click"/>
+                        <Button x:Name="ClearActionBtn" Grid.Column="2" Content="Clear" Click="ClearAction_Click"/>
+                        </Grid>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Modes -->
+            <TextBlock Text="Trackpads &amp; gyro" Foreground="#FF8B93A3" FontSize="11" Margin="0,4,0,4"/>
             <Grid Margin="0,0,0,8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="8"/>
                     <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="8"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-                <ComboBox x:Name="L4Combo" Grid.Row="0" Grid.Column="0" Header="L4" Tag="L4"
-                          HorizontalAlignment="Stretch" SelectionChanged="PaddleCombo_SelectionChanged"/>
-                <ComboBox x:Name="L5Combo" Grid.Row="0" Grid.Column="2" Header="L5" Tag="L5"
-                          HorizontalAlignment="Stretch" SelectionChanged="PaddleCombo_SelectionChanged"/>
-                <ComboBox x:Name="R4Combo" Grid.Row="2" Grid.Column="0" Header="R4" Tag="R4"
-                          HorizontalAlignment="Stretch" SelectionChanged="PaddleCombo_SelectionChanged"/>
-                <ComboBox x:Name="R5Combo" Grid.Row="2" Grid.Column="2" Header="R5" Tag="R5"
-                          HorizontalAlignment="Stretch" SelectionChanged="PaddleCombo_SelectionChanged"/>
+                <ComboBox x:Name="LeftPadCombo" Grid.Column="0" Header="Left pad"
+                          SelectionChanged="ModeCombo_SelectionChanged" Tag="left"/>
+                <ComboBox x:Name="RightPadCombo" Grid.Column="2" Header="Right pad"
+                          SelectionChanged="ModeCombo_SelectionChanged" Tag="right"/>
+                <ComboBox x:Name="GyroCombo" Grid.Column="4" Header="Gyro"
+                          SelectionChanged="ModeCombo_SelectionChanged" Tag="gyro"/>
             </Grid>
-            <Button Content="Refresh" Click="RefreshButton_Click" HorizontalAlignment="Stretch"/>
+
+            <Button Content="Refresh" Click="RefreshButton_Click" HorizontalAlignment="Stretch" Opacity="0.7"/>
         </StackPanel>
     </ScrollViewer>
 </Page>

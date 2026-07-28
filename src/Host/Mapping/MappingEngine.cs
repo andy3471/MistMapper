@@ -7,69 +7,108 @@ public sealed class MappingEngine
 {
     double _mouseAccumX;
     double _mouseAccumY;
+    readonly HashSet<string> _heldKeys = new(StringComparer.OrdinalIgnoreCase);
+    readonly HashSet<string> _heldMouse = new(StringComparer.OrdinalIgnoreCase);
 
-    public Xbox360InputState Map(SteamControllerState sc, ControllerProfile profile)
+    public Xbox360InputState Map(InputFrame frame, ControllerProfile profile)
     {
         var outState = new Xbox360InputState();
         uint buttons = 0;
+        var desiredKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var desiredMouse = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        void ApplyDigital(PhysicalInput src, bool pressed)
+        void ApplyDigital(string inputId, bool pressed)
         {
             if (!pressed) return;
-            var dst = profile.MapButton(src);
-            buttons |= ToButtonFlag(dst);
+            ApplyAction(profile.GetAction(inputId), 1f, ref outState, ref buttons, desiredKeys, desiredMouse);
         }
 
-        ApplyDigital(PhysicalInput.A, sc.A);
-        ApplyDigital(PhysicalInput.B, sc.B);
-        ApplyDigital(PhysicalInput.X, sc.X);
-        ApplyDigital(PhysicalInput.Y, sc.Y);
-        ApplyDigital(PhysicalInput.Lb, sc.Lb);
-        ApplyDigital(PhysicalInput.Rb, sc.Rb);
-        ApplyDigital(PhysicalInput.View, sc.View);
-        ApplyDigital(PhysicalInput.Menu, sc.Menu);
-        ApplyDigital(PhysicalInput.Steam, sc.Steam);
-        ApplyDigital(PhysicalInput.LsClick, sc.LsClick);
-        ApplyDigital(PhysicalInput.RsClick, sc.RsClick);
-        ApplyDigital(PhysicalInput.DpadUp, sc.DpadUp);
-        ApplyDigital(PhysicalInput.DpadDown, sc.DpadDown);
-        ApplyDigital(PhysicalInput.DpadLeft, sc.DpadLeft);
-        ApplyDigital(PhysicalInput.DpadRight, sc.DpadRight);
-        ApplyDigital(PhysicalInput.L4, sc.L4);
-        ApplyDigital(PhysicalInput.L5, sc.L5);
-        ApplyDigital(PhysicalInput.R4, sc.R4);
-        ApplyDigital(PhysicalInput.R5, sc.R5);
-        ApplyDigital(PhysicalInput.LeftTrackpadClick, sc.LeftTrackpadClick);
-        ApplyDigital(PhysicalInput.RightTrackpadClick, sc.RightTrackpadClick);
+        foreach (var (id, pressed) in frame.Digitals)
+        {
+            // Trackpads themselves are mode-driven; clicks are remappable digitals.
+            if (id is "LeftTrackpad" or "RightTrackpad" or "Gyro") continue;
 
-        // Triggers
-        byte lt = ScaleTrigger(sc.LeftTrigger, profile.TriggerDeadzone);
-        byte rt = ScaleTrigger(sc.RightTrigger, profile.TriggerDeadzone);
-        ApplyAnalogTrigger(profile.MapButton(PhysicalInput.Lt), lt, ref outState, ref buttons);
-        ApplyAnalogTrigger(profile.MapButton(PhysicalInput.Rt), rt, ref outState, ref buttons);
+            // Steam / Guide is permanently locked to Xbox Guide (profile remap ignored).
+            if (MappingLocks.IsLockedGuideInput(id))
+            {
+                if (pressed) buttons |= (uint)Xbox360Buttons.Guide;
+                continue;
+            }
 
-        // Sticks
-        short lsx = ApplyDeadzone(sc.LeftStickX, profile.StickDeadzone);
-        short lsy = ApplyDeadzone(sc.LeftStickY, profile.StickDeadzone);
-        short rsx = ApplyDeadzone(sc.RightStickX, profile.StickDeadzone);
-        short rsy = ApplyDeadzone(sc.RightStickY, profile.StickDeadzone);
+            ApplyDigital(id, pressed);
+        }
 
-        ApplyStick(profile.MapButton(PhysicalInput.LeftStick), lsx, lsy, ref outState);
-        ApplyStick(profile.MapButton(PhysicalInput.RightStick), rsx, rsy, ref outState);
+        ApplyAnalogTrigger(profile.GetAction("Lt"), ScaleAnalog(frame.GetAnalog("Lt"), profile.TriggerDeadzone), ref outState, ref buttons, desiredKeys, desiredMouse);
+        ApplyAnalogTrigger(profile.GetAction("Rt"), ScaleAnalog(frame.GetAnalog("Rt"), profile.TriggerDeadzone), ref outState, ref buttons, desiredKeys, desiredMouse);
 
-        ApplyTrackpad(profile.LeftTrackpad, sc.LeftTrackpadTouch, sc.LeftTrackpadX, sc.LeftTrackpadY, ref outState, ref buttons);
-        ApplyTrackpad(profile.RightTrackpad, sc.RightTrackpadTouch, sc.RightTrackpadX, sc.RightTrackpadY, ref outState, ref buttons);
+        if (frame.TryGetVector("LeftStick", out var lsx, out var lsy))
+            ApplyStick(profile.GetAction("LeftStick"), ApplyDeadzone(lsx, profile.StickDeadzone), ApplyDeadzone(lsy, profile.StickDeadzone), ref outState);
+        if (frame.TryGetVector("RightStick", out var rsx, out var rsy))
+            ApplyStick(profile.GetAction("RightStick"), ApplyDeadzone(rsx, profile.StickDeadzone), ApplyDeadzone(rsy, profile.StickDeadzone), ref outState);
 
-        if (profile.Gyro != GyroMode.Off && sc.HasImu)
-            ApplyGyro(profile, sc, ref outState);
+        ApplyTrackpad(profile.LeftTrackpad, frame.GetDigital("LeftTrackpad"), frame, "LeftTrackpad", ref outState, ref buttons);
+        ApplyTrackpad(profile.RightTrackpad, frame.GetDigital("RightTrackpad"), frame, "RightTrackpad", ref outState, ref buttons);
+
+        if (profile.Gyro != GyroMode.Off && frame.TryGetVector("Gyro", out var gx, out var gy))
+            ApplyGyro(profile, gx, gy, ref outState);
+
+        SyncKeys(desiredKeys);
+        SyncMouse(desiredMouse);
 
         outState.Buttons = buttons;
         return outState;
     }
 
-    static void ApplyAnalogTrigger(XboxOutput dst, byte value, ref Xbox360InputState state, ref uint buttons)
+    void ApplyAction(
+        OutputAction action,
+        float strength,
+        ref Xbox360InputState state,
+        ref uint buttons,
+        HashSet<string> desiredKeys,
+        HashSet<string> desiredMouse)
     {
-        switch (dst)
+        switch (action.Kind)
+        {
+            case OutputActionKind.Xbox:
+                if (action.Xbox is XboxOutput.Lt or XboxOutput.Rt)
+                    ApplyAnalogTrigger(action, (byte)Math.Clamp((int)(strength * 255), 0, 255), ref state, ref buttons, desiredKeys, desiredMouse);
+                else if (action.Xbox is XboxOutput.LeftStick or XboxOutput.RightStick)
+                {
+                    // digital → stick not supported as force; ignore
+                }
+                else
+                    buttons |= ToButtonFlag(action.Xbox);
+                break;
+            case OutputActionKind.Key when action.VirtualKey > 0:
+                desiredKeys.Add(KeyToken(action));
+                break;
+            case OutputActionKind.MouseButton:
+                desiredMouse.Add(action.MouseButton.ToString());
+                break;
+        }
+    }
+
+    void ApplyAnalogTrigger(
+        OutputAction action,
+        byte value,
+        ref Xbox360InputState state,
+        ref uint buttons,
+        HashSet<string> desiredKeys,
+        HashSet<string> desiredMouse)
+    {
+        if (action.Kind == OutputActionKind.Key && value > 32)
+        {
+            desiredKeys.Add(KeyToken(action));
+            return;
+        }
+        if (action.Kind == OutputActionKind.MouseButton && value > 32)
+        {
+            desiredMouse.Add(action.MouseButton.ToString());
+            return;
+        }
+        if (action.Kind != OutputActionKind.Xbox) return;
+
+        switch (action.Xbox)
         {
             case XboxOutput.Lt: state.LeftTrigger = Math.Max(state.LeftTrigger, value); break;
             case XboxOutput.Rt: state.RightTrigger = Math.Max(state.RightTrigger, value); break;
@@ -82,23 +121,27 @@ public sealed class MappingEngine
         }
     }
 
-    static void ApplyStick(XboxOutput dst, short x, short y, ref Xbox360InputState state)
+    static void ApplyStick(OutputAction action, short x, short y, ref Xbox360InputState state)
     {
-        if (dst == XboxOutput.LeftStick)
+        if (action.Kind != OutputActionKind.Xbox) return;
+        if (action.Xbox == XboxOutput.LeftStick)
         {
             state.ThumbLX = x;
             state.ThumbLY = y;
         }
-        else if (dst == XboxOutput.RightStick)
+        else if (action.Xbox == XboxOutput.RightStick)
         {
             state.ThumbRX = x;
             state.ThumbRY = y;
         }
     }
 
-    void ApplyTrackpad(TrackpadMode mode, bool touching, short x, short y, ref Xbox360InputState state, ref uint buttons)
+    void ApplyTrackpad(TrackpadMode mode, bool touching, InputFrame frame, string id, ref Xbox360InputState state, ref uint buttons)
     {
         if (!touching || mode == TrackpadMode.Off) return;
+        if (!frame.TryGetVector(id, out var nx, out var ny)) return;
+        short x = (short)Math.Clamp((int)(nx * 32767), short.MinValue, short.MaxValue);
+        short y = (short)Math.Clamp((int)(ny * 32767), short.MinValue, short.MaxValue);
 
         switch (mode)
         {
@@ -118,10 +161,26 @@ public sealed class MappingEngine
                 if (x > thresh) buttons |= (uint)Xbox360Buttons.DpadRight;
                 break;
             case TrackpadMode.AsMouse:
-                // Relative mouse via SendInput — applied by caller through MouseInjector when non-zero deltas accumulate.
                 _mouseAccumX += x / 4000.0;
                 _mouseAccumY += -y / 4000.0;
                 break;
+        }
+    }
+
+    void ApplyGyro(ControllerProfile profile, float ngx, float ngy, ref Xbox360InputState state)
+    {
+        float s = profile.GyroSensitivity;
+        short gx = ClampToShort(ngy * 32767f * s);
+        short gy = ClampToShort(-ngx * 32767f * s);
+        if (profile.Gyro == GyroMode.AsRightStick)
+        {
+            state.ThumbRX = (short)Math.Clamp(state.ThumbRX + gx, short.MinValue, short.MaxValue);
+            state.ThumbRY = (short)Math.Clamp(state.ThumbRY + gy, short.MinValue, short.MaxValue);
+        }
+        else if (profile.Gyro == GyroMode.AsMouse)
+        {
+            _mouseAccumX += gx / 2000.0;
+            _mouseAccumY += -gy / 2000.0;
         }
     }
 
@@ -135,37 +194,86 @@ public sealed class MappingEngine
         return true;
     }
 
-    void ApplyGyro(ControllerProfile profile, SteamControllerState sc, ref Xbox360InputState state)
+    public void ReleaseAllInjected()
     {
-        float s = profile.GyroSensitivity;
-        short gx = ClampToShort(sc.GyroY * s); // yaw-ish → stick X
-        short gy = ClampToShort(-sc.GyroX * s);
-        if (profile.Gyro == GyroMode.AsRightStick)
+        foreach (var token in _heldKeys.ToList())
+            ReleaseKeyToken(token);
+        _heldKeys.Clear();
+        foreach (var btn in _heldMouse.ToList())
         {
-            state.ThumbRX = (short)Math.Clamp(state.ThumbRX + gx, short.MinValue, short.MaxValue);
-            state.ThumbRY = (short)Math.Clamp(state.ThumbRY + gy, short.MinValue, short.MaxValue);
+            if (Enum.TryParse<MouseButtonOutput>(btn, true, out var b))
+                MouseInjector.SetButton(b, false);
         }
-        else if (profile.Gyro == GyroMode.AsMouse)
+        _heldMouse.Clear();
+    }
+
+    void SyncKeys(HashSet<string> desired)
+    {
+        foreach (var token in _heldKeys.Where(t => !desired.Contains(t)).ToList())
         {
-            _mouseAccumX += gx / 2000.0;
-            _mouseAccumY += -gy / 2000.0;
+            ReleaseKeyToken(token);
+            _heldKeys.Remove(token);
         }
+        foreach (var token in desired)
+        {
+            if (_heldKeys.Contains(token)) continue;
+            if (!TryParseKeyToken(token, out var mods, out var vk)) continue;
+            KeyboardInjector.SetModifier(mods, true);
+            KeyboardInjector.SetKey(vk, true);
+            _heldKeys.Add(token);
+        }
+    }
+
+    void SyncMouse(HashSet<string> desired)
+    {
+        foreach (var btn in _heldMouse.Where(b => !desired.Contains(b)).ToList())
+        {
+            if (Enum.TryParse<MouseButtonOutput>(btn, true, out var b))
+                MouseInjector.SetButton(b, false);
+            _heldMouse.Remove(btn);
+        }
+        foreach (var btn in desired)
+        {
+            if (_heldMouse.Contains(btn)) continue;
+            if (!Enum.TryParse<MouseButtonOutput>(btn, true, out var b)) continue;
+            MouseInjector.SetButton(b, true);
+            _heldMouse.Add(btn);
+        }
+    }
+
+    static string KeyToken(OutputAction a) => $"{(int)a.Modifiers}:{a.VirtualKey}";
+
+    static bool TryParseKeyToken(string token, out KeyModifiers mods, out int vk)
+    {
+        mods = KeyModifiers.None;
+        vk = 0;
+        var parts = token.Split(':');
+        if (parts.Length != 2) return false;
+        if (!int.TryParse(parts[0], out var m)) return false;
+        if (!int.TryParse(parts[1], out vk)) return false;
+        mods = (KeyModifiers)m;
+        return true;
+    }
+
+    static void ReleaseKeyToken(string token)
+    {
+        if (!TryParseKeyToken(token, out var mods, out var vk)) return;
+        KeyboardInjector.SetKey(vk, false);
+        KeyboardInjector.SetModifier(mods, false);
     }
 
     static short ClampToShort(float v) => (short)Math.Clamp((int)v, short.MinValue, short.MaxValue);
 
-    static byte ScaleTrigger(short raw, float deadzone)
+    static byte ScaleAnalog(float n, float deadzone)
     {
-        // raw 0..32767
-        float n = Math.Clamp(raw / 32767f, 0f, 1f);
+        n = Math.Clamp(n, 0f, 1f);
         if (n < deadzone) return 0;
         n = (n - deadzone) / (1f - deadzone);
         return (byte)Math.Clamp((int)(n * 255), 0, 255);
     }
 
-    static short ApplyDeadzone(short value, float deadzone)
+    static short ApplyDeadzone(float n, float deadzone)
     {
-        float n = value / 32767f;
         float mag = Math.Abs(n);
         if (mag < deadzone) return 0;
         float sign = Math.Sign(n);

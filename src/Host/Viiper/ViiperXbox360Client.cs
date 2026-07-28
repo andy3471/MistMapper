@@ -49,21 +49,25 @@ public enum Xbox360Buttons : uint
     Y = 0x8000
 }
 
-/// <summary>Minimal VIIPER TCP client for creating and feeding an xbox360 device.</summary>
+/// <summary>
+/// VIIPER TCP client. Management API = one TCP connection per command; response ends on socket close.
+/// </summary>
 public sealed class ViiperXbox360Client : IDisposable
 {
     readonly string _host;
     readonly int _apiPort;
-    TcpClient? _mgmt;
     TcpClient? _stream;
     NetworkStream? _deviceStream;
+    CancellationTokenSource? _rumbleCts;
     int _busId;
     string? _devId;
+    bool _connected;
 
-    public bool IsConnected => _deviceStream is not null;
+    public bool IsConnected => _connected && _deviceStream is not null;
     public int BusId => _busId;
     public string? DeviceId => _devId;
     public event Action<byte, byte>? RumbleReceived;
+    public static string? LastError { get; private set; }
 
     public ViiperXbox360Client(string host = "127.0.0.1", int apiPort = 3242)
     {
@@ -73,54 +77,62 @@ public sealed class ViiperXbox360Client : IDisposable
 
     public async Task ConnectAsync(CancellationToken ct = default)
     {
-        Disconnect();
+        LastError = null;
+        await TearDownAsync(removeBus: true, ct).ConfigureAwait(false);
 
-        _mgmt = new TcpClient();
-        await _mgmt.ConnectAsync(_host, _apiPort, ct);
-
-        // Create bus
-        var createResp = await SendMgmtAsync("bus/create", ct);
-        using (var doc = JsonDocument.Parse(createResp))
-            _busId = doc.RootElement.GetProperty("busId").GetInt32();
-
-        // Add xbox360 device
-        var addResp = await SendMgmtAsync($"bus/{_busId}/add {{\"type\":\"xbox360\"}}", ct);
-        using (var doc = JsonDocument.Parse(addResp))
+        try
         {
-            if (doc.RootElement.TryGetProperty("devId", out var idEl))
-                _devId = idEl.ValueKind == JsonValueKind.Number
-                    ? idEl.GetInt32().ToString()
-                    : idEl.GetString();
-            else if (doc.RootElement.TryGetProperty("id", out var id2))
-                _devId = id2.ToString();
-            else
-                throw new InvalidOperationException($"Unexpected add response: {addResp}");
+            var createResp = await SendMgmtAsync("bus/create", ct).ConfigureAwait(false);
+            EnsureNotError(createResp, "bus/create");
+            using (var doc = JsonDocument.Parse(createResp))
+                _busId = doc.RootElement.GetProperty("busId").GetInt32();
+
+            var addResp = await SendMgmtAsync(
+                $"bus/{_busId}/add {{\"type\":\"xbox360\"}}", ct).ConfigureAwait(false);
+            EnsureNotError(addResp, "bus/add xbox360");
+            using (var doc = JsonDocument.Parse(addResp))
+            {
+                if (doc.RootElement.TryGetProperty("devId", out var idEl))
+                    _devId = idEl.ValueKind == JsonValueKind.Number
+                        ? idEl.GetInt32().ToString()
+                        : idEl.GetString();
+                else
+                    throw new InvalidOperationException($"Unexpected add response: {addResp}");
+            }
+
+            if (string.IsNullOrEmpty(_devId))
+                throw new InvalidOperationException($"VIIPER returned empty device id: {addResp}");
+
+            _stream = new TcpClient();
+            await _stream.ConnectAsync(_host, _apiPort, ct).ConfigureAwait(false);
+            _deviceStream = _stream.GetStream();
+            var handshake = Encoding.UTF8.GetBytes($"bus/{_busId}/{_devId}\0");
+            await _deviceStream.WriteAsync(handshake, ct).ConfigureAwait(false);
+            await _deviceStream.FlushAsync(ct).ConfigureAwait(false);
+
+            TryUsbipAttach($"{_busId}-{_devId}");
+
+            _connected = true;
+            _rumbleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            _ = Task.Run(() => ReadRumbleLoop(_rumbleCts.Token), CancellationToken.None);
         }
-
-        // Device stream handshake
-        _stream = new TcpClient();
-        await _stream.ConnectAsync(_host, _apiPort, ct);
-        _deviceStream = _stream.GetStream();
-        var handshake = Encoding.UTF8.GetBytes($"bus/{_busId}/{_devId}\0");
-        await _deviceStream.WriteAsync(handshake, ct);
-        await _deviceStream.FlushAsync(ct);
-
-        _ = Task.Run(() => ReadRumbleLoop(ct), ct);
-    }
-
-    public async Task SendInputAsync(Xbox360InputState state, CancellationToken ct = default)
-    {
-        if (_deviceStream is null)
-            throw new InvalidOperationException("Not connected");
-        var bytes = state.ToBytes();
-        await _deviceStream.WriteAsync(bytes, ct);
+        catch (Exception ex)
+        {
+            LastError = ex.Message;
+            try { await TearDownAsync(removeBus: true, CancellationToken.None).ConfigureAwait(false); }
+            catch { /* ignore */ }
+            throw;
+        }
     }
 
     public void SendInput(Xbox360InputState state)
     {
-        if (_deviceStream is null) return;
-        var bytes = state.ToBytes();
-        _deviceStream.Write(bytes);
+        if (!_connected || _deviceStream is null) return;
+        try { _deviceStream.Write(state.ToBytes()); }
+        catch
+        {
+            _connected = false;
+        }
     }
 
     async Task ReadRumbleLoop(CancellationToken ct)
@@ -130,62 +142,157 @@ public sealed class ViiperXbox360Client : IDisposable
         {
             while (!ct.IsCancellationRequested && _deviceStream is not null)
             {
-                int n = await _deviceStream.ReadAsync(buf.AsMemory(0, 2), ct);
+                int n = await _deviceStream.ReadAsync(buf.AsMemory(0, 2), ct).ConfigureAwait(false);
                 if (n < 2) break;
                 RumbleReceived?.Invoke(buf[0], buf[1]);
             }
         }
-        catch
-        {
-            // stream closed
-        }
+        catch { /* closed */ }
+        finally { _connected = false; }
     }
 
     async Task<string> SendMgmtAsync(string request, CancellationToken ct)
     {
-        if (_mgmt is null) throw new InvalidOperationException("Management socket not open");
-        var stream = _mgmt.GetStream();
-        var payload = Encoding.UTF8.GetBytes(request + "\0");
-        await stream.WriteAsync(payload, ct);
-        await stream.FlushAsync(ct);
+        using var client = new TcpClient();
+        // Prefer IPv4 explicitly
+        await client.ConnectAsync(System.Net.IPAddress.Loopback, _apiPort, ct).ConfigureAwait(false);
+        await using var stream = client.GetStream();
 
-        var buffer = new List<byte>();
-        var tmp = new byte[1];
+        var payload = Encoding.UTF8.GetBytes(request + "\0");
+        await stream.WriteAsync(payload, ct).ConfigureAwait(false);
+        await stream.FlushAsync(ct).ConfigureAwait(false);
+
+        using var ms = new MemoryStream();
+        var tmp = new byte[512];
         while (true)
         {
-            int n = await stream.ReadAsync(tmp.AsMemory(0, 1), ct);
+            int n;
+            try
+            {
+                n = await stream.ReadAsync(tmp.AsMemory(0, tmp.Length), ct).ConfigureAwait(false);
+            }
+            catch (IOException) when (ms.Length > 0)
+            {
+                break;
+            }
+
             if (n == 0) break;
-            if (tmp[0] == 0) break;
-            buffer.Add(tmp[0]);
+
+            int nullAt = Array.IndexOf(tmp, (byte)0, 0, n);
+            if (nullAt >= 0)
+            {
+                if (nullAt > 0) ms.Write(tmp, 0, nullAt);
+                break;
+            }
+            ms.Write(tmp, 0, n);
         }
-        return Encoding.UTF8.GetString(buffer.ToArray());
+
+        var text = Encoding.UTF8.GetString(ms.ToArray()).Trim();
+        if (string.IsNullOrWhiteSpace(text))
+            throw new InvalidOperationException(
+                $"Empty response from VIIPER for '{request}'. Is usbip-win2 installed and is usbip.exe on PATH?");
+        return text;
+    }
+
+    static void EnsureNotError(string json, string op)
+    {
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("status", out var status) ||
+            status.ValueKind != JsonValueKind.Number)
+            return;
+
+        var code = status.GetInt32();
+        if (code < 400) return;
+
+        var detail = doc.RootElement.TryGetProperty("detail", out var d) ? d.GetString() : json;
+        if (detail?.Contains("usbip", StringComparison.OrdinalIgnoreCase) == true)
+            throw new InvalidOperationException(
+                "usbip-win2 missing or not on PATH. Install USBip from https://github.com/vadimgrn/usbip-win2 " +
+                @"and ensure ""C:\Program Files\USBip"" is on PATH, then restart viiper. Detail: " + detail);
+
+        throw new InvalidOperationException($"VIIPER {op} failed ({code}): {detail}");
+    }
+
+    static void TryUsbipAttach(string busDev)
+    {
+        var usbip = @"C:\Program Files\USBip\usbip.exe";
+        if (!File.Exists(usbip))
+        {
+            var path = Environment.GetEnvironmentVariable("PATH") ?? "";
+            foreach (var dir in path.Split(Path.PathSeparator))
+            {
+                var candidate = Path.Combine(dir.Trim('"'), "usbip.exe");
+                if (File.Exists(candidate)) { usbip = candidate; break; }
+            }
+        }
+        if (!File.Exists(usbip)) return;
+
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = usbip,
+                Arguments = $"attach -r 127.0.0.1 -b {busDev}",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
+            };
+            using var p = System.Diagnostics.Process.Start(psi);
+            p?.WaitForExit(4000);
+        }
+        catch
+        {
+            // VHCI may be broken; feeder stream still works for diagnostics.
+        }
+    }
+
+    async Task TearDownAsync(bool removeBus, CancellationToken ct)
+    {
+        _connected = false;
+        try { _rumbleCts?.Cancel(); } catch { }
+
+        try { _deviceStream?.Dispose(); } catch { }
+        try { _stream?.Dispose(); } catch { }
+        _deviceStream = null;
+        _stream = null;
+
+        if (removeBus && _busId > 0)
+        {
+            var bus = _busId;
+            var dev = _devId;
+            _busId = 0;
+            _devId = null;
+            try
+            {
+                if (!string.IsNullOrEmpty(dev))
+                    await SendMgmtAsync($"bus/{bus}/remove {dev}", ct).ConfigureAwait(false);
+            }
+            catch { /* ignore */ }
+            try
+            {
+                await SendMgmtAsync($"bus/remove {bus}", ct).ConfigureAwait(false);
+            }
+            catch { /* ignore */ }
+        }
+        else
+        {
+            _busId = 0;
+            _devId = null;
+        }
+
+        try { _rumbleCts?.Dispose(); } catch { }
+        _rumbleCts = null;
     }
 
     public void Disconnect()
     {
         try
         {
-            if (_mgmt is not null && _busId > 0 && _devId is not null)
-            {
-                try
-                {
-                    var stream = _mgmt.GetStream();
-                    var payload = Encoding.UTF8.GetBytes($"bus/{_busId}/remove {_devId}\0");
-                    stream.Write(payload);
-                }
-                catch { /* ignore */ }
-            }
+            TearDownAsync(removeBus: true, CancellationToken.None)
+                .Wait(TimeSpan.FromSeconds(2));
         }
-        finally
-        {
-            try { _deviceStream?.Dispose(); } catch { }
-            try { _stream?.Dispose(); } catch { }
-            try { _mgmt?.Dispose(); } catch { }
-            _deviceStream = null;
-            _stream = null;
-            _mgmt = null;
-            _devId = null;
-        }
+        catch { /* ignore */ }
     }
 
     public void Dispose() => Disconnect();
