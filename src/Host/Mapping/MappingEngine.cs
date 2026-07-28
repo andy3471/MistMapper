@@ -5,8 +5,12 @@ namespace SteamControllerBridge.Host.Mapping;
 
 public sealed class MappingEngine
 {
+    /// <summary>Pixels of cursor travel for a full-pad finger swipe (normalized Δ≈2).</summary>
+    const float TrackpadMouseSensitivity = 900f;
+
     double _mouseAccumX;
     double _mouseAccumY;
+    readonly Dictionary<string, (float X, float Y)> _padMouseLast = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> _heldKeys = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> _heldMouse = new(StringComparer.OrdinalIgnoreCase);
 
@@ -138,7 +142,13 @@ public sealed class MappingEngine
 
     void ApplyTrackpad(TrackpadMode mode, bool touching, InputFrame frame, string id, ref Xbox360InputState state, ref uint buttons)
     {
-        if (!touching || mode == TrackpadMode.Off) return;
+        if (mode == TrackpadMode.Off) return;
+        if (!touching)
+        {
+            _padMouseLast.Remove(id);
+            return;
+        }
+
         if (!frame.TryGetVector(id, out var nx, out var ny)) return;
         short x = (short)Math.Clamp((int)(nx * 32767), short.MinValue, short.MaxValue);
         short y = (short)Math.Clamp((int)(ny * 32767), short.MinValue, short.MaxValue);
@@ -161,8 +171,16 @@ public sealed class MappingEngine
                 if (x > thresh) buttons |= (uint)Xbox360Buttons.DpadRight;
                 break;
             case TrackpadMode.AsMouse:
-                _mouseAccumX += x / 4000.0;
-                _mouseAccumY += -y / 4000.0;
+                // Relative finger motion (Steam Desktop-style), not absolute position-as-velocity.
+                if (!_padMouseLast.TryGetValue(id, out var last))
+                {
+                    _padMouseLast[id] = (nx, ny);
+                    break;
+                }
+
+                _padMouseLast[id] = (nx, ny);
+                _mouseAccumX += (nx - last.X) * TrackpadMouseSensitivity;
+                _mouseAccumY += -(ny - last.Y) * TrackpadMouseSensitivity;
                 break;
         }
     }

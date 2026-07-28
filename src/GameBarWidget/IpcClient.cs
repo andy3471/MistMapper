@@ -36,6 +36,23 @@ namespace SteamControllerBridge.GameBarWidget
             }
         }
 
+        /// <summary>
+        /// Remove the heartbeat so the host immediately drops Gamepad override
+        /// when the widget is no longer visible.
+        /// </summary>
+        public static async Task ClearHeartbeatAsync()
+        {
+            try
+            {
+                var file = await ApplicationData.Current.LocalFolder.GetFileAsync(HeartbeatFileName);
+                await file.DeleteAsync();
+            }
+            catch
+            {
+                // already gone
+            }
+        }
+
         public static async Task<string> ReadStateAsync()
         {
             // Retry: host atomically replaces the file; a single failed read must not mean "offline".

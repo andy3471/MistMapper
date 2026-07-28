@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Gaming.XboxGameBar;
 using Windows.Data.Json;
 using Windows.UI;
 using Windows.UI.Xaml;
@@ -30,6 +31,7 @@ namespace SteamControllerBridge.GameBarWidget
         static readonly string[] GyroModes = { "Off", "AsRightStick", "AsMouse" };
 
         readonly DispatcherTimer _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+        XboxGameBarWidget _widget;
         bool _suppress;
         bool _busy;
         int _misses;
@@ -79,14 +81,47 @@ namespace SteamControllerBridge.GameBarWidget
         protected override async void OnNavigatedTo(NavigationEventArgs e)
         {
             base.OnNavigatedTo(e);
-            _timer.Start();
-            await RefreshAsync(force: true);
+            if (_widget != null)
+                _widget.VisibleChanged -= Widget_VisibleChanged;
+
+            _widget = e.Parameter as XboxGameBarWidget;
+            if (_widget != null)
+                _widget.VisibleChanged += Widget_VisibleChanged;
+
+            await ApplyVisibilityAsync(_widget == null || _widget.Visible);
         }
 
         protected override void OnNavigatedFrom(NavigationEventArgs e)
         {
+            if (_widget != null)
+            {
+                _widget.VisibleChanged -= Widget_VisibleChanged;
+                _widget = null;
+            }
             _timer.Stop();
+            _ = IpcClient.ClearHeartbeatAsync();
             base.OnNavigatedFrom(e);
+        }
+
+        async void Widget_VisibleChanged(XboxGameBarWidget sender, object args)
+        {
+            await ApplyVisibilityAsync(sender.Visible);
+        }
+
+        async Task ApplyVisibilityAsync(bool visible)
+        {
+            if (visible)
+            {
+                if (!_timer.IsEnabled)
+                    _timer.Start();
+                await RefreshAsync(force: true);
+            }
+            else
+            {
+                _timer.Stop();
+                // Drop heartbeat immediately so the host drops Gamepad override.
+                await IpcClient.ClearHeartbeatAsync();
+            }
         }
 
         async void RefreshButton_Click(object sender, RoutedEventArgs e) => await RefreshAsync(force: true);

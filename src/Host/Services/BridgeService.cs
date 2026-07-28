@@ -275,6 +275,7 @@ public sealed class BridgeService : IDisposable
 
                     _activeDriver.PrepareExclusive();
                     _lastKeepalive = DateTime.UtcNow;
+                    PublishStatus(BridgeRunState.Bridging, "Connected to VIIPER");
                 }
 
                 if (_activeDriver.TryRead(out var frame))
@@ -355,8 +356,14 @@ public sealed class BridgeService : IDisposable
         return true;
     }
 
-    bool IsGameBarOverrideActive() =>
-        _gameBar.IsGameBarOpen || _gameBarWidgetOpen;
+    bool IsGameBarOverrideActive()
+    {
+        // Disabled: Game Bar / widget processes often keep the widget "Visible"
+        // (or keep heartbeating) after the overlay is dismissed, which stuck the
+        // bridge in stock Xbox mode and ignored every remap. Re-enable only with
+        // a reliable overlay-visibility signal.
+        return false;
+    }
 
     void EnterLizardForLock()
     {

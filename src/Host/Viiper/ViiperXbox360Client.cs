@@ -112,8 +112,11 @@ public sealed class ViiperXbox360Client : IDisposable
 
             TryUsbipAttach($"{_busId}-{_devId}");
 
+            // Rumble CTS must outlive the connect timeout token — linking them caused
+            // IsConnected to flip false as soon as ConnectAsync returned, so the bridge
+            // loop reconnect forever and stuck on "Connecting to VIIPER…".
+            _rumbleCts = new CancellationTokenSource();
             _connected = true;
-            _rumbleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             _ = Task.Run(() => ReadRumbleLoop(_rumbleCts.Token), CancellationToken.None);
         }
         catch (Exception ex)
@@ -146,9 +149,17 @@ public sealed class ViiperXbox360Client : IDisposable
                 if (n < 2) break;
                 RumbleReceived?.Invoke(buf[0], buf[1]);
             }
+
+            // Stream ended unexpectedly (not a TearDown cancel).
+            if (!ct.IsCancellationRequested)
+                _connected = false;
         }
-        catch { /* closed */ }
-        finally { _connected = false; }
+        catch (OperationCanceledException) { /* TearDown */ }
+        catch
+        {
+            if (!ct.IsCancellationRequested)
+                _connected = false;
+        }
     }
 
     async Task<string> SendMgmtAsync(string request, CancellationToken ct)
@@ -239,7 +250,11 @@ public sealed class ViiperXbox360Client : IDisposable
                 RedirectStandardOutput = true
             };
             using var p = System.Diagnostics.Process.Start(psi);
-            p?.WaitForExit(4000);
+            if (p is null) return;
+            if (!p.WaitForExit(5000))
+            {
+                try { p.Kill(entireProcessTree: true); } catch { /* ignore */ }
+            }
         }
         catch
         {
