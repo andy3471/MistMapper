@@ -51,7 +51,7 @@ public sealed class MappingEngine
         var desiredMouse = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var mouseJoyActive = UsesMouseJoystick(profile);
         if (mouseJoyActive)
-            DecayMouseJoystick();
+            DecayMouseJoystick(profile, frame);
         else
             ResetMouseJoystick();
 
@@ -133,7 +133,7 @@ public sealed class MappingEngine
         || profile.RightTrackpad == TrackpadMode.AsMouseJoystick
         || profile.Gyro == GyroMode.AsMouseJoystick;
 
-    void DecayMouseJoystick()
+    void DecayMouseJoystick(ControllerProfile profile, InputFrame frame)
     {
         long now = Stopwatch.GetTimestamp();
         if (_mouseJoyLastTick != 0)
@@ -141,7 +141,8 @@ public sealed class MappingEngine
             float dt = (float)(now - _mouseJoyLastTick) / Stopwatch.Frequency;
             if (dt > 0f && dt < 0.25f)
             {
-                float decay = MathF.Exp(-MouseJoystickFrictionPerSec * dt);
+                float friction = MouseJoystickReturnFriction(profile, frame);
+                float decay = MathF.Exp(-friction * dt);
                 _mouseJoyX *= decay;
                 _mouseJoyY *= decay;
             }
@@ -150,6 +151,31 @@ public sealed class MappingEngine
         _mouseJoyLastTick = now;
         if (Math.Abs(_mouseJoyX) < 0.01f) _mouseJoyX = 0f;
         if (Math.Abs(_mouseJoyY) < 0.01f) _mouseJoyY = 0f;
+    }
+
+    /// <summary>
+    /// Mouse-joystick "trackball" = slower return-to-center after a flick, not a
+    /// per-frame impulse loop (that pegs the stick and spins the camera).
+    /// </summary>
+    static float MouseJoystickReturnFriction(ControllerProfile profile, InputFrame frame)
+    {
+        static float FromPad(TrackpadMode mode, TrackpadSurfaceSettings? settings, bool touching)
+        {
+            if (mode != TrackpadMode.AsMouseJoystick || settings is not { TrackballMode: true })
+                return -1f;
+            // While still touching, keep a snappier return so resting on the pad centers.
+            if (touching)
+                return Math.Max(MouseJoystickFrictionPerSec, TrackballFrictionPerSec(settings.TrackballFriction));
+            return TrackballFrictionPerSec(settings.TrackballFriction);
+        }
+
+        float left = FromPad(profile.LeftTrackpad, profile.LeftTrackpadSettings, frame.GetDigital("LeftTrackpad"));
+        float right = FromPad(profile.RightTrackpad, profile.RightTrackpadSettings, frame.GetDigital("RightTrackpad"));
+        if (left < 0 && right < 0)
+            return MouseJoystickFrictionPerSec;
+        if (left < 0) return right;
+        if (right < 0) return left;
+        return Math.Min(left, right);
     }
 
     void AddMouseJoystick(float dx, float dy)
@@ -260,8 +286,8 @@ public sealed class MappingEngine
         {
             _padMouseLast.Remove(id);
             _padSmooth.Remove(id);
-            // Trackball coast continues via TickTrackballCoast when enabled.
-            if (!surface.TrackballMode || mode is not (TrackpadMode.AsMouse or TrackpadMode.AsMouseJoystick))
+            // Trackball impulse coast is OS-mouse only.
+            if (!surface.TrackballMode || mode != TrackpadMode.AsMouse)
                 _padTrackballVel.Remove(id);
             return;
         }
@@ -352,8 +378,10 @@ public sealed class MappingEngine
         float outX = dx * (mouseJoystick ? MouseJoystickPadGain : TrackpadMouseSensitivity) * sensX * (invX ? -1 : 1);
         float outY = dy * (mouseJoystick ? MouseJoystickPadGain : TrackpadMouseSensitivity) * sensY * (invY ? -1 : 1);
 
-        if (surface.TrackballMode)
-            _padTrackballVel[id] = (outX, outY);
+        // Impulse coast is only for OS mouse. Mouse-joystick trackball is return-rate only
+        // (see MouseJoystickReturnFriction) — re-adding flick deltas each coast frame pegs the stick.
+        if (surface.TrackballMode && !mouseJoystick)
+            UpdateTrackballVelocity(id, outX, outY);
 
         if (mouseJoystick)
             AddMouseJoystick(outX, outY);
@@ -362,6 +390,51 @@ public sealed class MappingEngine
             _mouseAccumX += outX;
             _mouseAccumY += -outY;
         }
+    }
+
+    /// <summary>
+    /// Trackball coast must use flick momentum, not the final lift sample.
+    /// Pads often jump toward (0,0) on release, which would reverse coast direction.
+    /// </summary>
+    void UpdateTrackballVelocity(string id, float outX, float outY)
+    {
+        const float minSample = 0.0008f;
+        float mag = MathF.Sqrt(outX * outX + outY * outY);
+        if (mag < minSample)
+        {
+            // Finger nearly still — bleed velocity so a pause before lift doesn't coast.
+            if (_padTrackballVel.TryGetValue(id, out var idle))
+            {
+                idle.Vx *= 0.85f;
+                idle.Vy *= 0.85f;
+                if (Math.Abs(idle.Vx) < 0.002f && Math.Abs(idle.Vy) < 0.002f)
+                    _padTrackballVel.Remove(id);
+                else
+                    _padTrackballVel[id] = idle;
+            }
+            return;
+        }
+
+        if (!_padTrackballVel.TryGetValue(id, out var prev))
+        {
+            _padTrackballVel[id] = (outX, outY);
+            return;
+        }
+
+        float prevMag = MathF.Sqrt(prev.Vx * prev.Vx + prev.Vy * prev.Vy);
+        if (prevMag > minSample)
+        {
+            float dot = (prev.Vx * outX + prev.Vy * outY) / (prevMag * mag);
+            // Release spike: large sample opposite the flick — keep prior momentum.
+            if (dot < -0.2f && mag > prevMag * 0.35f)
+                return;
+        }
+
+        // EMA so one noisy frame can't own coast direction.
+        const float alpha = 0.45f;
+        _padTrackballVel[id] = (
+            prev.Vx * (1f - alpha) + outX * alpha,
+            prev.Vy * (1f - alpha) + outY * alpha);
     }
 
     float SmoothAxis(string id, string axis, float sample, float smoothing)
@@ -401,7 +474,8 @@ public sealed class MappingEngine
             var mode = id.Equals("LeftTrackpad", StringComparison.OrdinalIgnoreCase)
                 ? profile.LeftTrackpad
                 : profile.RightTrackpad;
-            if (mode is not (TrackpadMode.AsMouse or TrackpadMode.AsMouseJoystick))
+            // Mouse-joystick trackball is return-friction only (see MouseJoystickReturnFriction).
+            if (mode != TrackpadMode.AsMouse)
             {
                 _padTrackballVel.Remove(id);
                 continue;
@@ -410,8 +484,17 @@ public sealed class MappingEngine
             var (vx, vy) = _padTrackballVel[id];
             float friction = TrackballFrictionPerSec(surface.TrackballFriction);
             float vScale = Math.Clamp(surface.VerticalFrictionScale, 0.1f, 5f);
-            float decayX = MathF.Exp(-friction * 0.008f); // ~125 Hz frame assumption
-            float decayY = MathF.Exp(-friction * vScale * 0.008f);
+            float dt = 0.008f;
+            long now = Stopwatch.GetTimestamp();
+            if (_mouseJoyLastTick != 0)
+            {
+                float measured = (float)(now - _mouseJoyLastTick) / Stopwatch.Frequency;
+                if (measured > 0f && measured < 0.25f)
+                    dt = measured;
+            }
+
+            float decayX = MathF.Exp(-friction * dt);
+            float decayY = MathF.Exp(-friction * vScale * dt);
             vx *= decayX;
             vy *= decayY;
             if (Math.Abs(vx) < 0.002f && Math.Abs(vy) < 0.002f)
@@ -421,20 +504,16 @@ public sealed class MappingEngine
             }
             _padTrackballVel[id] = (vx, vy);
 
-            if (mode == TrackpadMode.AsMouseJoystick)
-                AddMouseJoystick(vx, vy);
-            else
-            {
-                _mouseAccumX += vx;
-                _mouseAccumY += -vy;
-            }
+            _mouseAccumX += vx;
+            _mouseAccumY += -vy;
         }
     }
 
     static float TrackballFrictionPerSec(TrackballFriction f) => f switch
     {
-        TrackballFriction.Off => 0.5f,
-        TrackballFriction.Low => 3f,
+        // Usable floor for mouse-joystick return; 0.5 made tips linger like a stuck stick.
+        TrackballFriction.Off => 2f,
+        TrackballFriction.Low => 4f,
         TrackballFriction.Medium => 8f,
         TrackballFriction.High => 14f,
         TrackballFriction.ExtraHigh => 22f,
