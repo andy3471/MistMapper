@@ -39,6 +39,11 @@ public sealed class SteamControllerDevice : IDisposable
     HidDevice? _device;
     HidStream? _stream;
     readonly object _writeLock = new();
+    readonly object _rumbleGate = new();
+    byte _rumbleLeft;
+    byte _rumbleRight;
+    CancellationTokenSource? _rumbleCts;
+    Task? _rumbleTask;
     readonly byte[] _readBuffer = new byte[64];
 
     public bool IsOpen => _stream is not null;
@@ -294,6 +299,8 @@ public sealed class SteamControllerDevice : IDisposable
 
     public void Close()
     {
+        StopRumbleLoop();
+        try { WriteRumbleMotors(0, 0); } catch { /* ignore */ }
         try { _stream?.Dispose(); } catch { /* ignore */ }
         _stream = null;
         _device = null;
@@ -340,32 +347,107 @@ public sealed class SteamControllerDevice : IDisposable
     {
         if (_stream is null) return false;
 
-        const int durationMs = 450;
-        const int resendMs = 40;
-        // Strong-ish identify pulse (0xFFFF ≈ full).
-        const ushort speed = 0xC000;
-
-        var deadline = DateTime.UtcNow.AddMilliseconds(durationMs);
-        var any = false;
-        while (DateTime.UtcNow < deadline)
+        // Snapshot game rumble so Identify doesn't leave motors stuck off afterward.
+        byte prevL, prevR;
+        lock (_rumbleGate)
         {
-            ct.ThrowIfCancellationRequested();
-            if (IsSc2)
-                any |= WriteTritonRumble(speed, speed);
-            else
-                any |= SendClassicRumble(0, speed, speed, 2, 0);
-
-            try { await Task.Delay(resendMs, ct); }
-            catch (OperationCanceledException) { break; }
+            prevL = _rumbleLeft;
+            prevR = _rumbleRight;
         }
 
-        // Stop motors.
-        if (IsSc2)
-            WriteTritonRumble(0, 0);
-        else
-            SendClassicRumble(0, 0, 0, 0, 0);
+        const int durationMs = 450;
+        SetRumble(0xC0, 0xC0);
+        try
+        {
+            await Task.Delay(durationMs, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            // fall through to restore
+        }
 
-        return any;
+        SetRumble(prevL, prevR);
+        return true;
+    }
+
+    /// <summary>
+    /// Xbox-style continuous rumble (0–255 per motor). SC2 output reports expire unless resent.
+    /// </summary>
+    public void SetRumble(byte leftMotor, byte rightMotor)
+    {
+        if (_stream is null) return;
+
+        lock (_rumbleGate)
+        {
+            _rumbleLeft = leftMotor;
+            _rumbleRight = rightMotor;
+            WriteRumbleMotors(leftMotor, rightMotor);
+
+            if (leftMotor == 0 && rightMotor == 0)
+            {
+                StopRumbleLoopUnlocked();
+                return;
+            }
+
+            // SC2 haptics need ~40ms refresh; SC1 feature rumble usually sticks, but
+            // refreshing both keeps behaviour consistent if the host drops a write.
+            if (_rumbleTask is null || _rumbleTask.IsCompleted)
+                StartRumbleLoopUnlocked();
+        }
+    }
+
+    void StartRumbleLoopUnlocked()
+    {
+        StopRumbleLoopUnlocked();
+        _rumbleCts = new CancellationTokenSource();
+        var ct = _rumbleCts.Token;
+        _rumbleTask = Task.Run(async () =>
+        {
+            try
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    await Task.Delay(40, ct).ConfigureAwait(false);
+                    byte l, r;
+                    lock (_rumbleGate)
+                    {
+                        l = _rumbleLeft;
+                        r = _rumbleRight;
+                        if (l == 0 && r == 0)
+                            break;
+                    }
+                    WriteRumbleMotors(l, r);
+                }
+            }
+            catch (OperationCanceledException) { /* stop */ }
+        }, CancellationToken.None);
+    }
+
+    void StopRumbleLoop()
+    {
+        lock (_rumbleGate)
+            StopRumbleLoopUnlocked();
+    }
+
+    void StopRumbleLoopUnlocked()
+    {
+        try { _rumbleCts?.Cancel(); } catch { /* ignore */ }
+        try { _rumbleCts?.Dispose(); } catch { /* ignore */ }
+        _rumbleCts = null;
+        _rumbleTask = null;
+    }
+
+    void WriteRumbleMotors(byte leftMotor, byte rightMotor)
+    {
+        // Xbox motors are 0–255; SC speeds are 16-bit.
+        ushort left = (ushort)(leftMotor * 257);
+        ushort right = (ushort)(rightMotor * 257);
+        if (IsSc2)
+            WriteTritonRumble(left, right);
+        else
+            SendClassicRumble(0, left, right,
+                leftMotor > 0 ? (byte)2 : (byte)0,
+                rightMotor > 0 ? (byte)2 : (byte)0);
     }
 
     bool IsSc2 => Sc2ProductIds.Contains(ProductId);

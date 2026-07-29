@@ -93,6 +93,25 @@ public sealed class BridgeServiceLoopTests : IDisposable
         bridge.Status.GameBarOverrideActive.Should().BeFalse();
     }
 
+    [Fact]
+    public async Task Viiper_rumble_is_forwarded_to_physical_driver()
+    {
+        _driver.Enqueue(new InputFrame());
+        _bridge.Start();
+
+        var connected = await WaitUntilAsync(
+            () => _viiperClient.IsConnected && _bridge.Status.ControllerConnected,
+            TimeSpan.FromSeconds(5));
+        connected.Should().BeTrue();
+
+        _viiperClient.RaiseRumble(200, 40);
+
+        var ok = await WaitUntilAsync(
+            () => _driver.RumbleHistory.Any(r => r.Left == 200 && r.Right == 40),
+            TimeSpan.FromSeconds(2));
+        ok.Should().BeTrue("VIIPER rumble should reach the physical controller driver");
+    }
+
     static async Task<bool> WaitUntilAsync(Func<bool> predicate, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;

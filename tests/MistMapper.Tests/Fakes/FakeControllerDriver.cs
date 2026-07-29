@@ -19,6 +19,7 @@ public sealed class FakeControllerDriver : IControllerDriver
     };
 
     public bool IsConnected => _open;
+    public List<(byte Left, byte Right)> RumbleHistory { get; } = [];
 
     public void Enqueue(InputFrame frame) => _frames.Enqueue(frame);
 
@@ -33,6 +34,9 @@ public sealed class FakeControllerDriver : IControllerDriver
     public bool PrepareExclusive() => true;
     public bool RestoreExclusive() => true;
     public bool KeepAlive() => true;
+
+    public void SetRumble(byte leftMotor, byte rightMotor) =>
+        RumbleHistory.Add((leftMotor, rightMotor));
 
     public bool TryRead(out InputFrame frame)
     {

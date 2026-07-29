@@ -22,12 +22,15 @@ public sealed class BridgeService : IDisposable
         public IControllerDriver Driver { get; set; } = null!;
         public MappingEngine Mapper { get; set; } = null!;
         public IViiperClient? Viiper { get; set; }
+        public Action<byte, byte>? RumbleHandler { get; set; }
         public List<string> Pressed { get; set; } = [];
         public ControllerProfile? ResolvedProfile { get; set; }
         public ActiveProfileSource ProfileSource { get; set; } = ActiveProfileSource.Default;
 
         public void Dispose()
         {
+            UnhookRumble();
+            try { Driver.SetRumble(0, 0); } catch { /* ignore */ }
             try { Mapper.ReleaseAllInjected(); } catch { /* ignore */ }
             try { Viiper?.Dispose(); } catch { /* ignore */ }
             Viiper = null;
@@ -39,6 +42,26 @@ public sealed class BridgeService : IDisposable
             catch { /* ignore */ }
             try { Driver.Close(); } catch { /* ignore */ }
             try { Driver.Dispose(); } catch { /* ignore */ }
+        }
+
+        public void UnhookRumble()
+        {
+            if (Viiper is null || RumbleHandler is null) return;
+            try { Viiper.RumbleReceived -= RumbleHandler; } catch { /* ignore */ }
+            RumbleHandler = null;
+        }
+
+        public void HookRumble()
+        {
+            UnhookRumble();
+            if (Viiper is null) return;
+            var driver = Driver;
+            RumbleHandler = (left, right) =>
+            {
+                try { driver.SetRumble(left, right); }
+                catch { /* ignore */ }
+            };
+            Viiper.RumbleReceived += RumbleHandler;
         }
     }
 
@@ -719,11 +742,14 @@ public sealed class BridgeService : IDisposable
 
         try
         {
-            slot.Viiper?.Dispose();
+            slot.UnhookRumble();
+            try { slot.Driver.SetRumble(0, 0); } catch { /* ignore */ }
+            try { slot.Viiper?.Dispose(); } catch { /* ignore */ }
             slot.Viiper = _viiperFactory();
             using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             connectCts.CancelAfter(TimeSpan.FromSeconds(20));
             await slot.Viiper.ConnectAsync(connectCts.Token);
+            slot.HookRumble();
             _viiperDep.Ok = true;
             _viiperDep.Detail = "Connected";
             _notifiedViiperDown = false;
@@ -733,6 +759,7 @@ public sealed class BridgeService : IDisposable
         catch (Exception ex)
         {
             _lastError = ex.Message;
+            slot.UnhookRumble();
             try { slot.Viiper?.Dispose(); } catch { /* ignore */ }
             slot.Viiper = null;
             _viiperDep.Ok = false;
@@ -793,6 +820,8 @@ public sealed class BridgeService : IDisposable
         {
             foreach (var slot in _slots)
             {
+                slot.UnhookRumble();
+                try { slot.Driver.SetRumble(0, 0); } catch { /* ignore */ }
                 try { slot.Viiper?.Dispose(); } catch { /* ignore */ }
                 slot.Viiper = null;
                 try { slot.Mapper.ReleaseAllInjected(); } catch { /* ignore */ }
@@ -823,6 +852,8 @@ public sealed class BridgeService : IDisposable
         {
             if (!restoreExclusive)
             {
+                slot.UnhookRumble();
+                try { slot.Driver.SetRumble(0, 0); } catch { /* ignore */ }
                 try { slot.Viiper?.Dispose(); } catch { /* ignore */ }
                 slot.Viiper = null;
                 try { slot.Mapper.ReleaseAllInjected(); } catch { /* ignore */ }

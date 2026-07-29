@@ -21,4 +21,10 @@ public interface IControllerDriver : IDisposable
     bool RestoreExclusive();
     bool KeepAlive();
     bool TryRead(out InputFrame frame);
+
+    /// <summary>
+    /// Xbox-style motor speeds (0–255). Left = large/low-frequency, right = small/high-frequency.
+    /// No-op on drivers that cannot rumble.
+    /// </summary>
+    void SetRumble(byte leftMotor, byte rightMotor) { }
 }

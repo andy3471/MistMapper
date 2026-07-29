@@ -81,6 +81,9 @@ public sealed class SteamControllerDriver : IControllerDriver
     public Task<bool> IdentifyAsync(CancellationToken ct = default) =>
         _device?.IdentifyAsync(ct) ?? Task.FromResult(false);
 
+    public void SetRumble(byte leftMotor, byte rightMotor) =>
+        _device?.SetRumble(leftMotor, rightMotor);
+
     public bool TryRead(out InputFrame frame)
     {
         frame = new InputFrame();
