@@ -106,19 +106,9 @@ namespace MistMapper.GameBarWidget
             ("Menu", new[] { "View", "Menu", "Steam" }, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>()),
         };
 
-        // View panel layout categories
-        static readonly (string Category, string[] InputIds)[] LayoutCategories =
-        {
-            ("Left Side", new[] { "Lb", "Lt", "View", "L4", "L5" }),
-            ("Right Side", new[] { "Rb", "Rt", "Menu", "R4", "R5" }),
-            ("Face Buttons", new[] { "A", "B", "X", "Y" }),
-            ("DPad", new[] { "DpadUp", "DpadDown", "DpadLeft", "DpadRight" }),
-            ("Left Joystick", new[] { "LeftStick", "LsClick" }),
-            ("Right Joystick", new[] { "RightStick", "RsClick" }),
-        };
-
         readonly DispatcherTimer _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
         XboxGameBarWidget _widget;
+        bool _preferredSizeApplied;
         bool _suppress;
         bool _busy;
         int _misses;
@@ -195,10 +185,19 @@ namespace MistMapper.GameBarWidget
             var key = e.VirtualKey;
             if (key == Windows.System.VirtualKey.GamepadY)
             { CycleViewEditTab(1); e.Handled = true; }
-            else if (key == Windows.System.VirtualKey.GamepadLeftShoulder)
-            { CycleEditCategory(-1); e.Handled = true; }
-            else if (key == Windows.System.VirtualKey.GamepadRightShoulder)
-            { CycleEditCategory(1); e.Handled = true; }
+            // Do not bind LB/RB — Game Bar (esp. Xbox mode) uses them to switch widgets.
+            // Do not bind View — it deselects/blur the widget window.
+            else if (key == Windows.System.VirtualKey.GamepadB)
+            {
+                // Only on main Edit — overlays use B for Back via PreviewKeyDown.
+                if (!IsOverlayOpen() && _activeViewTab == "Edit")
+                { CycleEditCategory(1); e.Handled = true; }
+            }
+            else if (key == Windows.System.VirtualKey.GamepadX)
+            {
+                if (!IsOverlayOpen() && _activeViewTab == "Edit")
+                { CycleEditCategory(-1); e.Handled = true; }
+            }
             else if (key == Windows.System.VirtualKey.GamepadLeftTrigger
                      || key == Windows.System.VirtualKey.GamepadRightTrigger)
             {
@@ -217,6 +216,7 @@ namespace MistMapper.GameBarWidget
             if (_widget != null)
                 _widget.VisibleChanged += Widget_VisibleChanged;
 
+            await EnsurePreferredSizeAsync();
             await ApplyVisibilityAsync(_widget == null || _widget.Visible);
         }
 
@@ -227,6 +227,7 @@ namespace MistMapper.GameBarWidget
                 _widget.VisibleChanged -= Widget_VisibleChanged;
                 _widget = null;
             }
+            _preferredSizeApplied = false;
             _timer.Stop();
             _ = IpcClient.ClearHeartbeatAsync();
             base.OnNavigatedFrom(e);
@@ -234,7 +235,34 @@ namespace MistMapper.GameBarWidget
 
         async void Widget_VisibleChanged(XboxGameBarWidget sender, object args)
         {
+            if (sender.Visible)
+                await EnsurePreferredSizeAsync();
             await ApplyVisibilityAsync(sender.Visible);
+        }
+
+        /// <summary>
+        /// Xbox mode often opens widgets tiny; bump size when below a usable floor.
+        /// Respects a user who already enlarged the window.
+        /// </summary>
+        async Task EnsurePreferredSizeAsync()
+        {
+            if (_widget == null || _preferredSizeApplied) return;
+            _preferredSizeApplied = true;
+            try
+            {
+                _widget.MinWindowSize = new Windows.Foundation.Size(420, 480);
+                _widget.MaxWindowSize = new Windows.Foundation.Size(780, 960);
+
+                var bounds = _widget.WindowBounds;
+                const double preferW = 560;
+                const double preferH = 680;
+                if (bounds.Width < 440 || bounds.Height < 520)
+                    await _widget.TryResizeWindowAsync(new Windows.Foundation.Size(preferW, preferH));
+            }
+            catch
+            {
+                // Resize is best-effort; Game Bar may reject in some display modes.
+            }
         }
 
         async Task ApplyVisibilityAsync(bool visible)
@@ -349,13 +377,11 @@ namespace MistMapper.GameBarWidget
             {
                 NoControllerBanner.Visibility = Visibility.Visible;
                 ControllerLayoutGrid.Visibility = Visibility.Collapsed;
-                CategorySummaries.Visibility = Visibility.Collapsed;
                 return;
             }
 
             NoControllerBanner.Visibility = Visibility.Collapsed;
             ControllerLayoutGrid.Visibility = Visibility.Visible;
-            CategorySummaries.Visibility = Visibility.Visible;
 
             var path = _controllerModel == "sc1"
                 ? "ms-appx:///Assets/controller-outline-sc1.png"
@@ -595,82 +621,56 @@ namespace MistMapper.GameBarWidget
 
         void BuildPreviewLabels(Dictionary<string, string> map)
         {
-            PreviewLeftLabels.Children.Clear();
-            PreviewRightLabels.Children.Clear();
             PreviewCategorySummaries.Children.Clear();
 
-            void Add(StackPanel panel, string id, string display)
+            foreach (var cat in EditCategories)
             {
-                var mapped = map.ContainsKey(id) ? map[id] : "None";
-                var text = string.IsNullOrEmpty(mapped) || mapped == "None"
-                    ? display
-                    : display + " \u2192 " + mapped;
-                panel.Children.Add(new TextBlock
-                {
-                    Text = text,
-                    FontSize = 11,
-                    Margin = new Thickness(0, 0, 0, 2),
-                    TextWrapping = TextWrapping.Wrap
-                });
-            }
+                if (cat.InputIds.Length == 0)
+                    continue;
 
-            if (_controllerModel == "sc1")
-            {
-                Add(PreviewLeftLabels, "Lb", "LB");
-                Add(PreviewLeftLabels, "Lt", "LT");
-                Add(PreviewLeftLabels, "L4", "L4");
-                Add(PreviewLeftLabels, "L5", "L5");
-                Add(PreviewLeftLabels, "View", "Select");
-                Add(PreviewRightLabels, "Rb", "RB");
-                Add(PreviewRightLabels, "Rt", "RT");
-                Add(PreviewRightLabels, "R4", "R4");
-                Add(PreviewRightLabels, "R5", "R5");
-                Add(PreviewRightLabels, "Menu", "Start");
-                Add(PreviewRightLabels, "A", "A");
-                Add(PreviewRightLabels, "B", "B");
-                Add(PreviewRightLabels, "X", "X");
-                Add(PreviewRightLabels, "Y", "Y");
-            }
-            else
-            {
-                Add(PreviewLeftLabels, "Lb", "LB");
-                Add(PreviewLeftLabels, "Lt", "LT");
-                Add(PreviewLeftLabels, "L4", "L4");
-                Add(PreviewLeftLabels, "L5", "L5");
-                Add(PreviewLeftLabels, "View", "Select");
-                Add(PreviewRightLabels, "Rb", "RB");
-                Add(PreviewRightLabels, "Rt", "RT");
-                Add(PreviewRightLabels, "R4", "R4");
-                Add(PreviewRightLabels, "R5", "R5");
-                Add(PreviewRightLabels, "Menu", "Start");
-                Add(PreviewRightLabels, "A", "A");
-                Add(PreviewRightLabels, "B", "B");
-                Add(PreviewRightLabels, "X", "X");
-                Add(PreviewRightLabels, "Y", "Y");
-            }
-
-            foreach (var (category, inputIds) in LayoutCategories)
-            {
                 PreviewCategorySummaries.Children.Add(new TextBlock
                 {
-                    Text = category.ToUpperInvariant(),
-                    FontSize = 11,
+                    Text = cat.Name,
+                    FontSize = 12,
                     FontWeight = Windows.UI.Text.FontWeights.SemiBold,
-                    Margin = new Thickness(0, 6, 0, 2),
+                    Margin = new Thickness(0, 10, 0, 6),
                     Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"]
                 });
-                var wrap = new StackPanel { Orientation = Orientation.Horizontal };
-                foreach (var id in inputIds)
+
+                foreach (var id in cat.InputIds)
                 {
                     var mapped = map.ContainsKey(id) ? map[id] : "None";
-                    wrap.Children.Add(new Border
+                    if (string.IsNullOrEmpty(mapped)) mapped = "None";
+
+                    var grid = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+                    grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    var nameBlock = new TextBlock
                     {
-                        Margin = new Thickness(0, 0, 4, 2),
-                        Padding = new Thickness(8, 4, 8, 4),
-                        Child = new TextBlock { Text = GetInputLabel(id) + ": " + mapped, FontSize = 11 }
+                        Text = GetInputLabel(id),
+                        FontSize = 14,
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+                    var valueBlock = new TextBlock
+                    {
+                        Text = mapped,
+                        FontSize = 14,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        Opacity = 0.75
+                    };
+                    Grid.SetColumn(valueBlock, 1);
+                    grid.Children.Add(nameBlock);
+                    grid.Children.Add(valueBlock);
+                    PreviewCategorySummaries.Children.Add(new Border
+                    {
+                        Child = grid,
+                        Background = (Windows.UI.Xaml.Media.Brush)Application.Current.Resources["SystemControlBackgroundBaseLowBrush"],
+                        CornerRadius = new CornerRadius(12),
+                        Padding = new Thickness(14, 12, 14, 12),
+                        Margin = new Thickness(0, 0, 0, 6)
                     });
                 }
-                PreviewCategorySummaries.Children.Add(wrap);
             }
         }
 
@@ -714,7 +714,11 @@ namespace MistMapper.GameBarWidget
 
             if (RemapView.Visibility == Visibility.Visible)
             {
-                if (key == Windows.System.VirtualKey.GamepadB || key == Windows.System.VirtualKey.Escape)
+                if (key == Windows.System.VirtualKey.GamepadX)
+                { CycleRemapTab(-1); e.Handled = true; }
+                else if (key == Windows.System.VirtualKey.GamepadB)
+                { CycleRemapTab(1); e.Handled = true; }
+                else if (key == Windows.System.VirtualKey.Escape)
                 {
                     RemapCancel_Click(this, new RoutedEventArgs());
                     e.Handled = true;
@@ -739,11 +743,11 @@ namespace MistMapper.GameBarWidget
 
             if (BrowseLayoutView.Visibility == Visibility.Visible)
             {
-                if (key == Windows.System.VirtualKey.GamepadLeftShoulder)
-                { CycleBrowseSection(-1); e.Handled = true; }
-                else if (key == Windows.System.VirtualKey.GamepadRightShoulder)
+                if (key == Windows.System.VirtualKey.GamepadB)
                 { CycleBrowseSection(1); e.Handled = true; }
-                else if (key == Windows.System.VirtualKey.GamepadB || key == Windows.System.VirtualKey.Escape)
+                else if (key == Windows.System.VirtualKey.GamepadX)
+                { CycleBrowseSection(-1); e.Handled = true; }
+                else if (key == Windows.System.VirtualKey.Escape)
                 {
                     BrowseLayoutBack_Click(this, new RoutedEventArgs());
                     e.Handled = true;
@@ -751,7 +755,7 @@ namespace MistMapper.GameBarWidget
                 return;
             }
 
-            // Y / LB / RB / triggers are handled once in CoreWindow_KeyDown (avoid double-step).
+            // Y / B / X / triggers are handled once in CoreWindow_KeyDown (avoid double-step).
         }
 
         async void ModePicker_Click(object sender, RoutedEventArgs e)
@@ -1243,16 +1247,26 @@ namespace MistMapper.GameBarWidget
             return string.IsNullOrEmpty(mapped) ? "None" : mapped;
         }
 
+        static readonly string[] RemapTabOrder = { "Gamepad", "Keyboard", "Mouse", "None" };
+
         void RemapTab_Click(object sender, RoutedEventArgs e)
         {
             if (!(sender is Button btn) || !(btn.Tag is string tab)) return;
+            SetRemapTab(tab);
+        }
 
-            if (tab == "None")
-            {
-                _ = ApplyRemapAsync("none", "", "0");
-                return;
-            }
+        void CycleRemapTab(int delta)
+        {
+            if (RemapView.Visibility != Visibility.Visible) return;
+            var idx = Array.FindIndex(RemapTabOrder, t =>
+                string.Equals(t, _remapTab, StringComparison.OrdinalIgnoreCase));
+            if (idx < 0) idx = 0;
+            idx = (idx + delta + RemapTabOrder.Length) % RemapTabOrder.Length;
+            SetRemapTab(RemapTabOrder[idx]);
+        }
 
+        void SetRemapTab(string tab)
+        {
             _remapTab = tab;
             if (tab == "Keyboard")
                 ApplyStickyModsFromCurrentBinding();
@@ -1261,6 +1275,36 @@ namespace MistMapper.GameBarWidget
 
             BuildRemapGrid();
             HighlightRemapTabs();
+            BringActiveRemapTabIntoView();
+        }
+
+        void BringActiveRemapTabIntoView()
+        {
+            Button active = null;
+            if (string.Equals(_remapTab, "Gamepad", StringComparison.OrdinalIgnoreCase)) active = RemapTabGamepad;
+            else if (string.Equals(_remapTab, "Keyboard", StringComparison.OrdinalIgnoreCase)) active = RemapTabKeyboard;
+            else if (string.Equals(_remapTab, "Mouse", StringComparison.OrdinalIgnoreCase)) active = RemapTabMouse;
+            else if (string.Equals(_remapTab, "None", StringComparison.OrdinalIgnoreCase)) active = RemapTabNone;
+            if (active == null || RemapTabsScroller == null || RemapTabsPanel == null) return;
+
+            RemapTabsPanel.UpdateLayout();
+            RemapTabsScroller.UpdateLayout();
+
+            var transform = active.TransformToVisual(RemapTabsPanel);
+            var bounds = transform.TransformBounds(new Windows.Foundation.Rect(0, 0, active.ActualWidth, active.ActualHeight));
+            var viewport = RemapTabsScroller.ViewportWidth;
+            if (viewport <= 0 || double.IsNaN(viewport)) return;
+
+            var offset = RemapTabsScroller.HorizontalOffset;
+            double? target = null;
+            const double pad = 8;
+            if (bounds.Left < offset + pad)
+                target = Math.Max(0, bounds.Left - pad);
+            else if (bounds.Right > offset + viewport - pad)
+                target = Math.Max(0, bounds.Right - viewport + pad);
+
+            if (target.HasValue)
+                RemapTabsScroller.ChangeView(target.Value, null, null, disableAnimation: false);
         }
 
         void ApplyStickyModsFromCurrentBinding()
@@ -1411,13 +1455,10 @@ namespace MistMapper.GameBarWidget
 
         void HighlightRemapTabs()
         {
-            var mapped = GetCurrentMappedDisplay();
-            var currentIsNone = string.Equals(mapped, "None", StringComparison.OrdinalIgnoreCase);
-
             SetTabActive(RemapTabGamepad, _remapTab == "Gamepad");
             SetTabActive(RemapTabKeyboard, _remapTab == "Keyboard");
             SetTabActive(RemapTabMouse, _remapTab == "Mouse");
-            SetTabActive(RemapTabNone, currentIsNone);
+            SetTabActive(RemapTabNone, _remapTab == "None");
         }
 
         static void SetTabActive(Button btn, bool active)
@@ -1437,6 +1478,30 @@ namespace MistMapper.GameBarWidget
                 BuildKeyboardGrid();
             else if (_remapTab == "Mouse")
                 BuildMouseGrid();
+            else if (_remapTab == "None")
+                BuildNoneGrid();
+        }
+
+        void BuildNoneGrid()
+        {
+            RemapGrid.Children.Add(new TextBlock
+            {
+                Text = "Remove the current binding for this input.",
+                FontSize = 13,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 12),
+                Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"]
+            });
+            var clear = new Button
+            {
+                Content = "Clear binding",
+                Style = (Style)Application.Current.Resources["PillAccentButtonStyle"],
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Padding = new Thickness(20, 12, 20, 12),
+                FontSize = 14
+            };
+            clear.Click += async (s, e) => await ApplyRemapAsync("none", "", "0");
+            RemapGrid.Children.Add(clear);
         }
 
         void BuildGamepadGrid()
@@ -1489,6 +1554,8 @@ namespace MistMapper.GameBarWidget
             AddModifierToggle(modPanel, "Shift", 4);
             RemapGrid.Children.Add(modPanel);
 
+            // Compact keys + horizontal scroll so rows are not clipped in the Game Bar window.
+            var keyboard = new StackPanel();
             var rows = new[]
             {
                 KeyboardRow1, KeyboardRow2, KeyboardRow3,
@@ -1504,18 +1571,30 @@ namespace MistMapper.GameBarWidget
                     {
                         Content = label,
                         Tag = "key:" + vk,
-                        Padding = new Thickness(8, 10, 8, 10),
-                        Margin = new Thickness(0, 0, 4, 4),
-                        MinWidth = 36 * width,
-                        FontSize = 13,
+                        Padding = new Thickness(4, 8, 4, 8),
+                        Margin = new Thickness(0, 0, 2, 2),
+                        MinWidth = 26 * width,
+                        FontSize = 11,
                         HorizontalContentAlignment = HorizontalAlignment.Center
                     };
                     StyleAsCurrentBinding(btn, IsCurrentKeyBinding(vk));
                     btn.Click += RemapGridButton_Click;
                     wrap.Children.Add(btn);
                 }
-                RemapGrid.Children.Add(wrap);
+                keyboard.Children.Add(wrap);
             }
+
+            var scroller = new ScrollViewer
+            {
+                Content = keyboard,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                HorizontalScrollMode = ScrollMode.Enabled,
+                VerticalScrollMode = ScrollMode.Disabled,
+                ZoomMode = ZoomMode.Disabled,
+                Padding = new Thickness(0, 0, 0, 4)
+            };
+            RemapGrid.Children.Add(scroller);
         }
 
         void AddModifierToggle(StackPanel panel, string label, int flag)
@@ -1523,9 +1602,9 @@ namespace MistMapper.GameBarWidget
             var toggle = new ToggleButton
             {
                 Content = label,
-                Padding = new Thickness(16, 10, 16, 10),
-                Margin = new Thickness(0, 0, 8, 0),
-                FontSize = 14
+                Padding = new Thickness(12, 8, 12, 8),
+                Margin = new Thickness(0, 0, 6, 0),
+                FontSize = 13
             };
             toggle.IsChecked = (_stickyMods & flag) != 0;
             toggle.Checked += (s, _) =>
@@ -1594,140 +1673,129 @@ namespace MistMapper.GameBarWidget
             await RefreshAsync(force: true);
         }
 
-        // ═══════════════ View panel: controller layout labels ═══════════════
+        // ═══════════════ View panel: controller callouts (read-only) ═══════════════
 
         void RebuildLayoutLabels()
         {
             LeftLabelsPanel.Children.Clear();
             RightLabelsPanel.Children.Clear();
-            CategorySummaries.Children.Clear();
 
             if (!_controllerConnected || string.IsNullOrEmpty(_controllerModel))
                 return;
+
+            ViewLayoutTitle.Text = string.IsNullOrEmpty(_selectedProfileName) ? "—" : _selectedProfileName;
+            ViewLayoutSubtitle.Text = string.IsNullOrEmpty(_activeLayoutName)
+                ? "Current layout"
+                : _activeLayoutName;
 
             if (_controllerModel == "sc1")
                 BuildSc1Labels();
             else
                 BuildSc2Labels();
 
-            foreach (var (category, inputIds) in LayoutCategories)
-            {
-                var header = new TextBlock
-                {
-                    Text = category.ToUpperInvariant(),
-                    FontSize = 11,
-                    FontWeight = Windows.UI.Text.FontWeights.SemiBold,
-                    Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"],
-                    Margin = new Thickness(0, 6, 0, 2)
-                };
-                CategorySummaries.Children.Add(header);
-
-                var wrap = new StackPanel { Orientation = Orientation.Horizontal };
-                foreach (var id in inputIds)
-                {
-                    var mapped = _inputMap.ContainsKey(id) ? _inputMap[id] : "None";
-                    if (IsLockedGuideInput(id)) mapped = "Guide (locked)";
-
-                    var label = GetInputLabel(id);
-                    var btn = new Button
-                    {
-                        Content = label + ": " + mapped,
-                        Tag = id,
-                        Padding = new Thickness(8, 4, 8, 4),
-                        Margin = new Thickness(0, 0, 4, 2),
-                        FontSize = 11,
-                        IsEnabled = !IsLockedGuideInput(id)
-                    };
-                    btn.Click += MappingLabel_Click;
-                    wrap.Children.Add(btn);
-                }
-                CategorySummaries.Children.Add(wrap);
-            }
+            // Modes that aren't a single face button — append under the matching side.
+            AddModeCallout(LeftLabelsPanel, "left", "L Pad");
+            AddModeCallout(RightLabelsPanel, "right", "R Pad");
+            AddModeCallout(RightLabelsPanel, "gyro", "Gyro");
         }
 
         void BuildSc2Labels()
         {
-            // 2026 Steam Controller: sticks primary, smaller trackpads below, proper D-pad
-            AddMappingLabel(LeftLabelsPanel, "Lb", "Left Bumper");
-            AddMappingLabel(LeftLabelsPanel, "Lt", "Left Trigger");
-            AddMappingLabel(LeftLabelsPanel, "L4", "L4 Grip");
-            AddMappingLabel(LeftLabelsPanel, "L5", "L5 Grip");
-            AddMappingLabel(LeftLabelsPanel, "View", "Select");
-            AddMappingLabel(LeftLabelsPanel, "LeftStick", "Left Stick");
-            AddMappingLabel(LeftLabelsPanel, "DpadUp", "DPad Up");
-            AddMappingLabel(LeftLabelsPanel, "DpadDown", "DPad Down");
-            AddMappingLabel(LeftLabelsPanel, "DpadLeft", "DPad Left");
-            AddMappingLabel(LeftLabelsPanel, "DpadRight", "DPad Right");
-            AddMappingLabel(LeftLabelsPanel, "LeftTrackpad", "Left Trackpad");
+            AddCallout(LeftLabelsPanel, "Lb", "LB");
+            AddCallout(LeftLabelsPanel, "Lt", "LT");
+            AddCallout(LeftLabelsPanel, "L4", "L4");
+            AddCallout(LeftLabelsPanel, "L5", "L5");
+            AddCallout(LeftLabelsPanel, "View", "Select");
+            AddCallout(LeftLabelsPanel, "LeftStick", "L Stick");
+            AddCallout(LeftLabelsPanel, "LsClick", "LS Click");
+            AddCallout(LeftLabelsPanel, "DpadUp", "DPad U");
+            AddCallout(LeftLabelsPanel, "DpadDown", "DPad D");
+            AddCallout(LeftLabelsPanel, "DpadLeft", "DPad L");
+            AddCallout(LeftLabelsPanel, "DpadRight", "DPad R");
+            AddCallout(LeftLabelsPanel, "LeftTrackpadClick", "L Pad Click");
 
-            AddMappingLabel(RightLabelsPanel, "Rb", "Right Bumper");
-            AddMappingLabel(RightLabelsPanel, "Rt", "Right Trigger");
-            AddMappingLabel(RightLabelsPanel, "R4", "R4 Grip");
-            AddMappingLabel(RightLabelsPanel, "R5", "R5 Grip");
-            AddMappingLabel(RightLabelsPanel, "Menu", "Start");
-            AddMappingLabel(RightLabelsPanel, "Y", "Y");
-            AddMappingLabel(RightLabelsPanel, "X", "X");
-            AddMappingLabel(RightLabelsPanel, "B", "B");
-            AddMappingLabel(RightLabelsPanel, "A", "A");
-            AddMappingLabel(RightLabelsPanel, "RightStick", "Right Stick");
-            AddMappingLabel(RightLabelsPanel, "RightTrackpad", "Right Trackpad");
+            AddCallout(RightLabelsPanel, "Rb", "RB");
+            AddCallout(RightLabelsPanel, "Rt", "RT");
+            AddCallout(RightLabelsPanel, "R4", "R4");
+            AddCallout(RightLabelsPanel, "R5", "R5");
+            AddCallout(RightLabelsPanel, "Menu", "Start");
+            AddCallout(RightLabelsPanel, "Y", "Y");
+            AddCallout(RightLabelsPanel, "X", "X");
+            AddCallout(RightLabelsPanel, "B", "B");
+            AddCallout(RightLabelsPanel, "A", "A");
+            AddCallout(RightLabelsPanel, "RightStick", "R Stick");
+            AddCallout(RightLabelsPanel, "RsClick", "RS Click");
+            AddCallout(RightLabelsPanel, "RightTrackpadClick", "R Pad Click");
+            AddCallout(RightLabelsPanel, "Steam", "Steam");
         }
 
         void BuildSc1Labels()
         {
-            // 2015 Steam Controller: large circular trackpads primary, single left stick below left pad
-            AddMappingLabel(LeftLabelsPanel, "Lb", "Left Bumper");
-            AddMappingLabel(LeftLabelsPanel, "Lt", "Left Trigger");
-            AddMappingLabel(LeftLabelsPanel, "L4", "L4 Grip");
-            AddMappingLabel(LeftLabelsPanel, "L5", "L5 Grip");
-            AddMappingLabel(LeftLabelsPanel, "View", "Select");
-            AddMappingLabel(LeftLabelsPanel, "LeftTrackpad", "Left Trackpad");
-            AddMappingLabel(LeftLabelsPanel, "DpadUp", "Pad Up");
-            AddMappingLabel(LeftLabelsPanel, "DpadDown", "Pad Down");
-            AddMappingLabel(LeftLabelsPanel, "DpadLeft", "Pad Left");
-            AddMappingLabel(LeftLabelsPanel, "DpadRight", "Pad Right");
-            AddMappingLabel(LeftLabelsPanel, "LeftStick", "Left Stick");
+            AddCallout(LeftLabelsPanel, "Lb", "LB");
+            AddCallout(LeftLabelsPanel, "Lt", "LT");
+            AddCallout(LeftLabelsPanel, "L4", "L4");
+            AddCallout(LeftLabelsPanel, "L5", "L5");
+            AddCallout(LeftLabelsPanel, "View", "Select");
+            AddCallout(LeftLabelsPanel, "LeftTrackpadClick", "L Pad Click");
+            AddCallout(LeftLabelsPanel, "DpadUp", "Pad U");
+            AddCallout(LeftLabelsPanel, "DpadDown", "Pad D");
+            AddCallout(LeftLabelsPanel, "DpadLeft", "Pad L");
+            AddCallout(LeftLabelsPanel, "DpadRight", "Pad R");
+            AddCallout(LeftLabelsPanel, "LeftStick", "L Stick");
+            AddCallout(LeftLabelsPanel, "LsClick", "LS Click");
 
-            AddMappingLabel(RightLabelsPanel, "Rb", "Right Bumper");
-            AddMappingLabel(RightLabelsPanel, "Rt", "Right Trigger");
-            AddMappingLabel(RightLabelsPanel, "R4", "R4 Grip");
-            AddMappingLabel(RightLabelsPanel, "R5", "R5 Grip");
-            AddMappingLabel(RightLabelsPanel, "Menu", "Start");
-            AddMappingLabel(RightLabelsPanel, "RightTrackpad", "Right Trackpad");
-            AddMappingLabel(RightLabelsPanel, "Y", "Y");
-            AddMappingLabel(RightLabelsPanel, "X", "X");
-            AddMappingLabel(RightLabelsPanel, "B", "B");
-            AddMappingLabel(RightLabelsPanel, "A", "A");
-            AddMappingLabel(RightLabelsPanel, "RightStick", "Right Stick");
+            AddCallout(RightLabelsPanel, "Rb", "RB");
+            AddCallout(RightLabelsPanel, "Rt", "RT");
+            AddCallout(RightLabelsPanel, "R4", "R4");
+            AddCallout(RightLabelsPanel, "R5", "R5");
+            AddCallout(RightLabelsPanel, "Menu", "Start");
+            AddCallout(RightLabelsPanel, "RightTrackpadClick", "R Pad Click");
+            AddCallout(RightLabelsPanel, "Y", "Y");
+            AddCallout(RightLabelsPanel, "X", "X");
+            AddCallout(RightLabelsPanel, "B", "B");
+            AddCallout(RightLabelsPanel, "A", "A");
+            AddCallout(RightLabelsPanel, "RightStick", "R Stick");
+            AddCallout(RightLabelsPanel, "RsClick", "RS Click");
+            AddCallout(RightLabelsPanel, "Steam", "Steam");
         }
 
-        void AddMappingLabel(StackPanel panel, string inputId, string displayName)
+        void AddModeCallout(StackPanel panel, string modeKey, string label)
+        {
+            if (!_modeValues.ContainsKey(modeKey)) return;
+            var mode = _modeValues[modeKey];
+            if (string.IsNullOrEmpty(mode) || mode.Equals("Off", StringComparison.OrdinalIgnoreCase))
+                return;
+            AddCalloutText(panel, label, FormatModeLabel(mode));
+        }
+
+        void AddCallout(StackPanel panel, string inputId, string shortName)
         {
             var mapped = _inputMap.ContainsKey(inputId) ? _inputMap[inputId] : "";
             if (IsLockedGuideInput(inputId)) mapped = "Guide";
-            var text = string.IsNullOrEmpty(mapped) || mapped == "None"
-                ? displayName
-                : displayName + " \u2192 " + mapped;
-
-            var btn = new Button
-            {
-                Content = text,
-                Tag = inputId,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = HorizontalAlignment.Left,
-                Padding = new Thickness(6, 3, 6, 3),
-                Margin = new Thickness(0, 0, 0, 2),
-                FontSize = 11,
-                IsEnabled = !IsLockedGuideInput(inputId)
-            };
-            btn.Click += MappingLabel_Click;
-            panel.Children.Add(btn);
+            if (string.IsNullOrEmpty(mapped) || mapped.Equals("None", StringComparison.OrdinalIgnoreCase))
+                mapped = "—";
+            AddCalloutText(panel, shortName, mapped);
         }
 
-        void MappingLabel_Click(object sender, RoutedEventArgs e)
+        static void AddCalloutText(StackPanel panel, string shortName, string mapped)
         {
-            if (!(sender is Button btn) || !(btn.Tag is string id)) return;
-            OpenRemapView(id);
+            var block = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
+            block.Children.Add(new TextBlock
+            {
+                Text = shortName,
+                FontSize = 11,
+                Opacity = 0.65,
+                Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"]
+            });
+            block.Children.Add(new TextBlock
+            {
+                Text = mapped,
+                FontSize = 13,
+                FontWeight = Windows.UI.Text.FontWeights.SemiBold,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseHighBrush"]
+            });
+            panel.Children.Add(block);
         }
 
         string GetInputLabel(string inputId)
