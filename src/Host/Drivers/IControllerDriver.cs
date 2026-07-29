@@ -1,6 +1,6 @@
-using SteamControllerBridge.Shared;
+using MistMapper.Shared;
 
-namespace SteamControllerBridge.Host.Drivers;
+namespace MistMapper.Host.Drivers;
 
 public interface IControllerDriver : IDisposable
 {

@@ -1,4 +1,4 @@
-namespace SteamControllerBridge.Widget;
+namespace MistMapper.Widget;
 
 static class Program
 {

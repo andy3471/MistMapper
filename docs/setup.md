@@ -1,4 +1,4 @@
-# Setup guide — Steam Controller Bridge
+# Setup guide — MistMapper
 
 ## 1. usbip-win2
 
@@ -53,8 +53,8 @@ Keep VIIPER running while you play (the install script starts it minimized).
 ## 3. Host app
 
 ```powershell
-dotnet publish src\Host\SteamControllerBridge.Host.csproj -c Release -r win-x64 --self-contained false -o publish\Host
-.\publish\Host\SteamControllerBridge.exe --tray
+dotnet publish src\Host\MistMapper.Host.csproj -c Release -r win-x64 --self-contained false -o publish\Host
+.\publish\Host\MistMapper.exe --tray
 ```
 
 Tray menu:
@@ -65,7 +65,7 @@ Tray menu:
 
 All remapping (Xbox / keyboard / mouse, trackpads, gyro, per-game bind) is done in the **Game Bar widget**.
 
-Profiles live in `%AppData%\SteamControllerBridge\profiles.json`.
+Profiles live in `%AppData%\MistMapper\profiles.json`.
 
 ### Drivers
 
@@ -88,7 +88,7 @@ Keyboard injection uses `SendInput`. Some elevated games may not receive injecte
 The host must start **inside** Xbox Full Screen Experience without opening Game Bar.
 
 1. Enable **Start with Windows** in the tray (or run `scripts\install-startup.ps1`).  
-2. Open **Settings → Apps → Startup → Steam Controller Bridge**.  
+2. Open **Settings → Apps → Startup → MistMapper**.  
 3. Set startup to **Start at log in** (not “Start when exiting to desktop”).  
 4. Enter Xbox mode / FSE. The virtual pad should appear once VIIPER + controller are ready.
 
@@ -96,7 +96,7 @@ Game Bar / the Widget exe is **optional** and only needed to remap.
 
 A helper script is also written to:
 
-`%AppData%\SteamControllerBridge\enable-fse-startup.ps1`
+`%AppData%\MistMapper\enable-fse-startup.ps1`
 
 ### Path 2 — AnyFSE
 
@@ -104,14 +104,14 @@ If you use [AnyFSE](https://github.com/ashpynov/AnyFSE) as the FSE home app:
 
 1. Set AnyFSE as home under Settings → Gaming → Full screen experience / Xbox mode.  
 2. Configure your preferred launcher (Xbox, Playnite, …).  
-3. Set **custom startup application** to `SteamControllerBridge.exe` (with `--tray`).
+3. Set **custom startup application** to `MistMapper.exe` (with `--tray`).
 
 ### Path 3 — FseHome wrapper (optional)
 
-`SteamControllerBridge.FseHome.exe` starts the host, then optionally a handoff launcher:
+`MistMapper.FseHome.exe` starts the host, then optionally a handoff launcher:
 
 ```powershell
-.\SteamControllerBridge.FseHome.exe --launch "C:\Path\To\Playnite.FullscreenApp.exe"
+.\MistMapper.FseHome.exe --launch "C:\Path\To\Playnite.FullscreenApp.exe"
 ```
 
 To appear as a selectable FSE home app you must package it as a sideloaded MSIX with the community `gamingHome` capability (same approach as AnyFSE). This is unofficial and can break on Windows updates — prefer Path 1/2 unless Path 1 fails on your device.
@@ -121,10 +121,10 @@ To appear as a selectable FSE home app you must package it as a sideloaded MSIX 
 ### Desktop companion (always available)
 
 ```powershell
-.\publish\Widget\SteamControllerBridge.Widget.exe
+.\publish\Widget\MistMapper.Widget.exe
 ```
 
-Or use Host tray → **Open remapper**. Talks over named pipe `SteamControllerBridge.Ipc`.
+Or use Host tray → **Open remapper**. Talks over named pipe `MistMapper.Ipc`.
 
 ### Game Bar widget (Win+G) — visual controller map
 
@@ -143,7 +143,7 @@ Installer scripts: `scripts\build-gamebar-widget.ps1` + staged `Install-GameBarW
 powershell -ExecutionPolicy Bypass -File .\scripts\build-gamebar-widget.ps1
 ```
 
-This creates a self-signed cert (`CN=SteamControllerBridge`), packs an MSIX/Appx, and stages:
+This creates a self-signed cert (`CN=MistMapper`), packs an MSIX/Appx, and stages:
 
 `publish\GameBarWidget\`
 
@@ -156,11 +156,11 @@ cd .\publish\GameBarWidget
 
 **Use it**
 
-1. Start `SteamControllerBridge.exe` (tray) — required for remaps  
-2. Press **Win+G** → Widgets menu → pin **SC Bridge**  
+1. Start `MistMapper.exe` (tray) — required for remaps  
+2. Press **Win+G** → Widgets menu → pin **MistMapper**  
 3. Use the visual map (tap controls), status chips, profile/game bind, trackpad/gyro modes  
 
-IPC: the widget writes requests into its package `LocalState`; the host watches `%LocalAppData%\Packages\SteamControllerBridge.GameBar_*\LocalState\`.
+IPC: the widget writes requests into its package `LocalState`; the host watches `%LocalAppData%\Packages\MistMapper.GameBar_*\LocalState\`.
 
 **Trust note:** this uses a local self-signed cert (not Store-signed). Windows will treat it as sideloaded developer content.
 

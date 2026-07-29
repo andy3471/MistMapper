@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace SteamControllerBridge.FseHome;
+namespace MistMapper.FseHome;
 
 /// <summary>
 /// Path 3 stub: thin launcher that starts the bridge host, then optionally a real home app (Xbox/Playnite).
@@ -13,6 +13,7 @@ static class Program
     {
         string? host = FindHost();
         string? handoff = GetArg(args, "--launch")
+                          ?? Environment.GetEnvironmentVariable("MISTMAPPER_FSE_HANDOFF")
                           ?? Environment.GetEnvironmentVariable("SCB_FSE_HANDOFF");
 
         if (host is not null)
@@ -29,10 +30,10 @@ static class Program
     {
         var candidates = new[]
         {
-            Path.Combine(AppContext.BaseDirectory, "SteamControllerBridge.exe"),
-            Path.Combine(AppContext.BaseDirectory, "..", "Host", "SteamControllerBridge.exe"),
+            Path.Combine(AppContext.BaseDirectory, "MistMapper.exe"),
+            Path.Combine(AppContext.BaseDirectory, "..", "Host", "MistMapper.exe"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "SteamControllerBridge", "SteamControllerBridge.exe")
+                "MistMapper", "MistMapper.exe")
         };
         return candidates.FirstOrDefault(File.Exists);
     }

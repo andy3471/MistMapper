@@ -1,7 +1,7 @@
 using System.Text.Json;
-using SteamControllerBridge.Shared;
+using MistMapper.Shared;
 
-namespace SteamControllerBridge.Host.Services;
+namespace MistMapper.Host.Services;
 
 public sealed class ProfileService
 {
@@ -15,10 +15,42 @@ public sealed class ProfileService
     {
         var dir = directory ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "SteamControllerBridge");
+            "MistMapper");
         Directory.CreateDirectory(dir);
         _path = Path.Combine(dir, "profiles.json");
+        MigrateLegacyAppDataIfNeeded(dir);
         _doc = LoadOrCreate();
+    }
+
+    /// <summary>One-shot copy from pre-rename %AppData%\SteamControllerBridge.</summary>
+    static void MigrateLegacyAppDataIfNeeded(string newDir)
+    {
+        var newProfiles = Path.Combine(newDir, "profiles.json");
+        if (File.Exists(newProfiles)) return;
+
+        var legacyDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "SteamControllerBridge");
+        var legacyProfiles = Path.Combine(legacyDir, "profiles.json");
+        if (!File.Exists(legacyProfiles)) return;
+
+        try
+        {
+            File.Copy(legacyProfiles, newProfiles);
+            foreach (var file in Directory.EnumerateFiles(legacyDir))
+            {
+                var name = Path.GetFileName(file);
+                if (string.Equals(name, "profiles.json", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var dest = Path.Combine(newDir, name);
+                if (!File.Exists(dest))
+                    File.Copy(file, dest);
+            }
+        }
+        catch
+        {
+            // Fall through to LoadOrCreate defaults if migration fails.
+        }
     }
 
     public ProfileStoreDocument Document
@@ -251,6 +283,84 @@ public sealed class ProfileService
         Changed?.Invoke();
     }
 
+    public void SetSensitivity(string profileId, SensitivityPayload s)
+    {
+        lock (_lock)
+        {
+            var p = _doc.Profiles.First(x => x.Id == profileId);
+            if (s.StickDeadzone.HasValue) p.StickDeadzone = s.StickDeadzone.Value;
+            if (s.TriggerDeadzone.HasValue) p.TriggerDeadzone = s.TriggerDeadzone.Value;
+            if (s.TrackpadDeadzone.HasValue) p.TrackpadDeadzone = s.TrackpadDeadzone.Value;
+            if (s.StickSensitivityX.HasValue) p.StickSensitivityX = s.StickSensitivityX.Value;
+            if (s.StickSensitivityY.HasValue) p.StickSensitivityY = s.StickSensitivityY.Value;
+            if (s.TrackpadSensitivityX.HasValue) p.TrackpadSensitivityX = s.TrackpadSensitivityX.Value;
+            if (s.TrackpadSensitivityY.HasValue) p.TrackpadSensitivityY = s.TrackpadSensitivityY.Value;
+            if (s.GyroSensitivity.HasValue) p.GyroSensitivity = s.GyroSensitivity.Value;
+            if (s.GyroSensitivityX.HasValue) p.GyroSensitivityX = s.GyroSensitivityX.Value;
+            if (s.GyroSensitivityY.HasValue) p.GyroSensitivityY = s.GyroSensitivityY.Value;
+            if (s.InvertStickX.HasValue) p.InvertStickX = s.InvertStickX.Value;
+            if (s.InvertStickY.HasValue) p.InvertStickY = s.InvertStickY.Value;
+            if (s.InvertTrackpadX.HasValue) p.InvertTrackpadX = s.InvertTrackpadX.Value;
+            if (s.InvertTrackpadY.HasValue) p.InvertTrackpadY = s.InvertTrackpadY.Value;
+            if (s.InvertGyroX.HasValue) p.InvertGyroX = s.InvertGyroX.Value;
+            if (s.InvertGyroY.HasValue) p.InvertGyroY = s.InvertGyroY.Value;
+            p.IsOfficial = false;
+            SaveUnlocked();
+        }
+        Changed?.Invoke();
+    }
+
+    public IReadOnlyList<ControllerSlot> GetControllerSlots()
+    {
+        lock (_lock)
+            return _doc.ControllerSlots.Select(s => new ControllerSlot
+            {
+                Order = s.Order,
+                DriverId = s.DriverId,
+                ProfileId = s.ProfileId,
+                DisplayName = s.DisplayName,
+                Enabled = s.Enabled
+            }).OrderBy(s => s.Order).ToList();
+    }
+
+    public void SetControllerSlotOrder(List<ControllerSlot> slots)
+    {
+        lock (_lock)
+        {
+            _doc.ControllerSlots = slots.Select((s, i) => new ControllerSlot
+            {
+                Order = i,
+                DriverId = s.DriverId,
+                ProfileId = s.ProfileId,
+                DisplayName = s.DisplayName,
+                Enabled = s.Enabled
+            }).ToList();
+            SaveUnlocked();
+        }
+        Changed?.Invoke();
+    }
+
+    public void SetControllerSlotProfile(string driverId, string? profileId)
+    {
+        lock (_lock)
+        {
+            var slot = _doc.ControllerSlots.FirstOrDefault(s =>
+                s.DriverId.Equals(driverId, StringComparison.OrdinalIgnoreCase));
+            if (slot is null)
+            {
+                slot = new ControllerSlot
+                {
+                    Order = _doc.ControllerSlots.Count,
+                    DriverId = driverId
+                };
+                _doc.ControllerSlots.Add(slot);
+            }
+            slot.ProfileId = profileId;
+            SaveUnlocked();
+        }
+        Changed?.Invoke();
+    }
+
     public void BindToGame(string profileId, string matchExe, string? matchPathContains = null, string? displayName = null)
     {
         if (string.IsNullOrWhiteSpace(matchExe))
@@ -401,7 +511,15 @@ public sealed class ProfileService
         AutoPauseWhenSteamRunning = d.AutoPauseWhenSteamRunning,
         StartWithWindows = d.StartWithWindows,
         Profiles = d.Profiles.Select(CloneProfile).ToList(),
-        ProfileBindings = d.ProfileBindings.Select(CloneBinding).ToList()
+        ProfileBindings = d.ProfileBindings.Select(CloneBinding).ToList(),
+        ControllerSlots = d.ControllerSlots.Select(s => new ControllerSlot
+        {
+            Order = s.Order,
+            DriverId = s.DriverId,
+            ProfileId = s.ProfileId,
+            DisplayName = s.DisplayName,
+            Enabled = s.Enabled
+        }).ToList()
     };
 
     static ProfileBinding CloneBinding(ProfileBinding b) => new()
@@ -431,7 +549,20 @@ public sealed class ProfileService
             Gyro = p.Gyro,
             GyroSensitivity = p.GyroSensitivity,
             StickDeadzone = p.StickDeadzone,
-            TriggerDeadzone = p.TriggerDeadzone
+            TriggerDeadzone = p.TriggerDeadzone,
+            TrackpadDeadzone = p.TrackpadDeadzone,
+            StickSensitivityX = p.StickSensitivityX,
+            StickSensitivityY = p.StickSensitivityY,
+            TrackpadSensitivityX = p.TrackpadSensitivityX,
+            TrackpadSensitivityY = p.TrackpadSensitivityY,
+            GyroSensitivityX = p.GyroSensitivityX,
+            GyroSensitivityY = p.GyroSensitivityY,
+            InvertStickX = p.InvertStickX,
+            InvertStickY = p.InvertStickY,
+            InvertTrackpadX = p.InvertTrackpadX,
+            InvertTrackpadY = p.InvertTrackpadY,
+            InvertGyroX = p.InvertGyroX,
+            InvertGyroY = p.InvertGyroY
         };
         clone.EnsureLockedMappings();
         return clone;

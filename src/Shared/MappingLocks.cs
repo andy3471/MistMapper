@@ -1,4 +1,4 @@
-namespace SteamControllerBridge.Shared;
+namespace MistMapper.Shared;
 
 /// <summary>Inputs that cannot be remapped by the user.</summary>
 public static class MappingLocks

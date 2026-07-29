@@ -1,0 +1,45 @@
+---
+description: Testing conventions for MistMapper test suite
+globs: "**/tests/**/*.cs"
+alwaysApply: false
+---
+
+# Testing Conventions
+
+## Framework
+
+- **xUnit** for test runner, **FluentAssertions** for assertions.
+- Global usings configured via csproj `<Using>` items for `Xunit` and `FluentAssertions`.
+
+## Naming
+
+- Test class: `{ClassUnderTest}Tests` (e.g. `MappingEngineTests`, `BridgeServiceTests`).
+- Test method: `MethodOrScenario_condition_expectedResult` (e.g. `Map_pressing_A_sets_xbox_A_button`).
+
+## Test Doubles
+
+- Located in `Fakes/` folder.
+- Naming conventions:
+  - `Recording*` — captures calls for verification (e.g. `RecordingKeyboardSink`).
+  - `Test*` — simple state holders (e.g. `TestForegroundState`, `TestSteamState`).
+  - `Fake*` — richer fakes with configurable behavior (e.g. `FakeViiperClient`).
+- Never mock static methods; inject interfaces instead.
+
+## Structure
+
+- One assertion concept per test.
+- Use constructor injection with fakes — instantiate the SUT with test doubles:
+
+```csharp
+readonly RecordingMouseSink _mouse = new();
+readonly MappingEngine _engine;
+
+public MappingEngineSinkTests()
+{
+    _engine = new MappingEngine(mouse: _mouse);
+}
+```
+
+## Suppressions
+
+- Test projects suppress `CA1707` (underscores in method names) and `CA1716`.

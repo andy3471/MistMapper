@@ -1,4 +1,4 @@
-namespace SteamControllerBridge.Shared;
+namespace MistMapper.Shared;
 
 public enum OutputActionKind
 {

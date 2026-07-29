@@ -1,9 +1,9 @@
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
-using SteamControllerBridge.Shared;
+using MistMapper.Shared;
 
-namespace SteamControllerBridge.Host.Services;
+namespace MistMapper.Host.Services;
 
 public sealed class IpcServer : IDisposable
 {
@@ -190,6 +190,34 @@ public sealed class IpcServer : IDisposable
             {
                 var p = Deserialize<BindProfileToGamePayload>(request.Payload);
                 _profiles.BindToGame(p.ProfileId, p.MatchExe, p.MatchPathContains, p.DisplayName);
+                break;
+            }
+
+            case IpcCommands.SetSensitivity:
+            {
+                var p = Deserialize<SensitivityPayload>(request.Payload);
+                _profiles.SetSensitivity(p.ProfileId, p);
+                break;
+            }
+
+            case IpcCommands.GetControllerSlots:
+            {
+                var slots = _profiles.GetControllerSlots();
+                response.Payload = JsonSerializer.SerializeToElement(slots, IpcProtocol.JsonOptions);
+                break;
+            }
+
+            case IpcCommands.SetControllerSlotOrder:
+            {
+                var p = Deserialize<SetControllerSlotOrderPayload>(request.Payload);
+                _profiles.SetControllerSlotOrder(p.Slots);
+                break;
+            }
+
+            case IpcCommands.SetControllerSlotProfile:
+            {
+                var p = Deserialize<SetControllerSlotProfilePayload>(request.Payload);
+                _profiles.SetControllerSlotProfile(p.DriverId, p.ProfileId);
                 break;
             }
 

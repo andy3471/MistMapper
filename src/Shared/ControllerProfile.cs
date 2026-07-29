@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace SteamControllerBridge.Shared;
+namespace MistMapper.Shared;
 
 public sealed class ControllerProfile
 {
@@ -27,6 +27,21 @@ public sealed class ControllerProfile
     public float GyroSensitivity { get; set; } = 1.0f;
     public float StickDeadzone { get; set; } = 0.08f;
     public float TriggerDeadzone { get; set; } = 0.05f;
+    public float TrackpadDeadzone { get; set; } = 0.02f;
+
+    public float StickSensitivityX { get; set; } = 1.0f;
+    public float StickSensitivityY { get; set; } = 1.0f;
+    public float TrackpadSensitivityX { get; set; } = 1.0f;
+    public float TrackpadSensitivityY { get; set; } = 1.0f;
+    public float GyroSensitivityX { get; set; } = 1.0f;
+    public float GyroSensitivityY { get; set; } = 1.0f;
+
+    public bool InvertStickX { get; set; }
+    public bool InvertStickY { get; set; }
+    public bool InvertTrackpadX { get; set; }
+    public bool InvertTrackpadY { get; set; }
+    public bool InvertGyroX { get; set; }
+    public bool InvertGyroY { get; set; }
 
     public static ControllerProfile CreateDefault()
     {
@@ -144,7 +159,17 @@ public sealed class ProfileStoreDocument
     public string ActiveProfileId { get; set; } = "";
     public List<ControllerProfile> Profiles { get; set; } = [];
     public List<ProfileBinding> ProfileBindings { get; set; } = [];
+    public List<ControllerSlot> ControllerSlots { get; set; } = [];
     public bool BridgeEnabled { get; set; } = true;
     public bool AutoPauseWhenSteamRunning { get; set; } = true;
     public bool StartWithWindows { get; set; } = true;
+}
+
+public sealed class ControllerSlot
+{
+    public int Order { get; set; }
+    public string DriverId { get; set; } = "";
+    public string? ProfileId { get; set; }
+    public string? DisplayName { get; set; }
+    public bool Enabled { get; set; } = true;
 }

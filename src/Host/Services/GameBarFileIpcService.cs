@@ -1,8 +1,8 @@
 using System.Text;
 using System.Text.Json;
-using SteamControllerBridge.Shared;
+using MistMapper.Shared;
 
-namespace SteamControllerBridge.Host.Services;
+namespace MistMapper.Host.Services;
 
 /// <summary>
 /// File-based IPC for the Game Bar UWP widget (package LocalState).
@@ -10,7 +10,8 @@ namespace SteamControllerBridge.Host.Services;
 /// </summary>
 public sealed class GameBarFileIpcService : IDisposable
 {
-    const string PackageNamePrefix = "SteamControllerBridge.GameBar_";
+    static readonly JsonSerializerOptions CaseInsensitiveJson = new() { PropertyNameCaseInsensitive = true };
+    const string PackageNamePrefix = "MistMapper.GameBar_";
     const string RequestFile = "widget-request.txt";
     const string ResponseFile = "widget-response.txt";
     const string StateFile = "widget-state.json";
@@ -245,6 +246,15 @@ public sealed class GameBarFileIpcService : IDisposable
                 break;
             }
 
+            case "setSensitivity":
+            {
+                // JSON payload matching SensitivityPayload
+                var p = JsonSerializer.Deserialize<SensitivityPayload>(payload, CaseInsensitiveJson)
+                    ?? throw new ArgumentException("Invalid sensitivity payload");
+                _profiles.SetSensitivity(p.ProfileId, p);
+                break;
+            }
+
             case "ensureOfficialLayouts":
                 _profiles.EnsureOfficialLayouts();
                 break;
@@ -309,11 +319,30 @@ public sealed class GameBarFileIpcService : IDisposable
             writer.WriteString("viiperDetail", viiper?.Detail ?? "");
             writer.WriteBoolean("dependencyError", viiper is { Ok: false });
             writer.WriteBoolean("controllerConnected", status.ControllerConnected);
+            writer.WriteString("controllerModel", status.ControllerConnected
+                ? (string.IsNullOrEmpty(status.ControllerModel) ? "sc2" : status.ControllerModel)
+                : "");
             writer.WriteString("runState", status.State.ToString());
             writer.WriteBoolean("gameBarOverrideActive", status.GameBarOverrideActive);
             writer.WriteString("leftTrackpad", active.LeftTrackpad.ToString());
             writer.WriteString("rightTrackpad", active.RightTrackpad.ToString());
             writer.WriteString("gyro", active.Gyro.ToString());
+
+            writer.WriteNumber("stickSensitivityX", active.StickSensitivityX);
+            writer.WriteNumber("stickSensitivityY", active.StickSensitivityY);
+            writer.WriteNumber("trackpadSensitivityX", active.TrackpadSensitivityX);
+            writer.WriteNumber("trackpadSensitivityY", active.TrackpadSensitivityY);
+            writer.WriteNumber("gyroSensitivityX", active.GyroSensitivityX);
+            writer.WriteNumber("gyroSensitivityY", active.GyroSensitivityY);
+            writer.WriteNumber("stickDeadzone", active.StickDeadzone);
+            writer.WriteNumber("trackpadDeadzone", active.TrackpadDeadzone);
+            writer.WriteNumber("triggerDeadzone", active.TriggerDeadzone);
+            writer.WriteBoolean("invertStickX", active.InvertStickX);
+            writer.WriteBoolean("invertStickY", active.InvertStickY);
+            writer.WriteBoolean("invertTrackpadX", active.InvertTrackpadX);
+            writer.WriteBoolean("invertTrackpadY", active.InvertTrackpadY);
+            writer.WriteBoolean("invertGyroX", active.InvertGyroX);
+            writer.WriteBoolean("invertGyroY", active.InvertGyroY);
 
             writer.WriteStartArray("profiles");
             foreach (var p in profiles)

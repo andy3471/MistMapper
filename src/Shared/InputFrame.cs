@@ -1,4 +1,4 @@
-namespace SteamControllerBridge.Shared;
+namespace MistMapper.Shared;
 
 /// <summary>Device-agnostic sample from an <c>IControllerDriver</c>.</summary>
 public sealed class InputFrame

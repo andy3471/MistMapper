@@ -1,4 +1,4 @@
-namespace SteamControllerBridge.Shared;
+namespace MistMapper.Shared;
 
 /// <summary>Decoded Steam Controller 2026 state from a 0x42/0x45 report.</summary>
 public sealed class SteamControllerState

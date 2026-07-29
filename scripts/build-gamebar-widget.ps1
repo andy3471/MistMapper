@@ -11,8 +11,8 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
 $widgetDir = Join-Path $repoRoot 'src\GameBarWidget'
 $certDir = Join-Path $widgetDir 'Certificates'
-$pfxPath = Join-Path $widgetDir 'SteamControllerBridge.GameBarWidget_TemporaryKey.pfx'
-$cerPath = Join-Path $certDir 'SteamControllerBridge.GameBarWidget.cer'
+$pfxPath = Join-Path $widgetDir 'MistMapper.GameBarWidget_TemporaryKey.pfx'
+$cerPath = Join-Path $certDir 'MistMapper.GameBarWidget.cer'
 $msbuildCandidates = @(
     "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
     "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
@@ -45,16 +45,16 @@ New-Item -ItemType Directory -Force -Path $certDir | Out-Null
 
 # Create / reuse code-signing certificate (CN must match Package.appxmanifest Publisher)
 $existing = Get-ChildItem Cert:\CurrentUser\My |
-    Where-Object { $_.Subject -eq 'CN=SteamControllerBridge' -and $_.HasPrivateKey } |
+    Where-Object { $_.Subject -eq 'CN=MistMapper' -and $_.HasPrivateKey } |
     Select-Object -First 1
 
 if (-not $existing) {
-    Write-Host 'Creating self-signed certificate CN=SteamControllerBridge...'
+    Write-Host 'Creating self-signed certificate CN=MistMapper...'
     $existing = New-SelfSignedCertificate `
         -Type Custom `
-        -Subject 'CN=SteamControllerBridge' `
+        -Subject 'CN=MistMapper' `
         -KeyUsage DigitalSignature `
-        -FriendlyName 'Steam Controller Bridge Game Bar' `
+        -FriendlyName 'MistMapper Game Bar' `
         -CertStoreLocation 'Cert:\CurrentUser\My' `
         -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3', '2.5.29.19={text}')
 }
@@ -79,7 +79,7 @@ if (-not $trusted) {
 # Prefer signing via /p:PackageCertificateThumbprint
 
 Write-Host 'Restoring NuGet packages...'
-& $msbuild (Join-Path $widgetDir 'SteamControllerBridge.GameBarWidget.csproj') `
+& $msbuild (Join-Path $widgetDir 'MistMapper.GameBarWidget.csproj') `
     /t:Restore `
     /p:Configuration=$Configuration `
     /p:Platform=$Platform `
@@ -87,7 +87,7 @@ Write-Host 'Restoring NuGet packages...'
 if ($LASTEXITCODE -ne 0) { throw 'NuGet restore failed' }
 
 Write-Host 'Building and packing Game Bar widget...'
-& $msbuild (Join-Path $widgetDir 'SteamControllerBridge.GameBarWidget.csproj') `
+& $msbuild (Join-Path $widgetDir 'MistMapper.GameBarWidget.csproj') `
     /t:Rebuild `
     /p:Configuration=$Configuration `
     /p:Platform=$Platform `
@@ -133,11 +133,11 @@ Copy-Item (Join-Path $pkgFolder.FullName '*') $stage -Recurse -Force
 Get-ChildItem $stage -Filter '*.cer' -File | Sort-Object LastWriteTime -Descending | Select-Object -Skip 1 |
     ForEach-Object { Remove-Item $_.FullName -Force }
 if (-not (Get-ChildItem $stage -Filter '*.cer' -File -ErrorAction SilentlyContinue)) {
-    Copy-Item $cerPath (Join-Path $stage 'SteamControllerBridge.GameBarWidget.cer') -Force
+    Copy-Item $cerPath (Join-Path $stage 'MistMapper.GameBarWidget.cer') -Force
 }
 Copy-Item (Join-Path $widgetDir 'BundleArtifacts\Install-GameBarWidget.ps1') (Join-Path $stage 'Install-GameBarWidget.ps1') -Force
 Copy-Item (Join-Path $widgetDir 'BundleArtifacts\Install-GameBarWidget.cmd') (Join-Path $stage 'Install-GameBarWidget.cmd') -Force
 
 Write-Host ''
 Write-Host "Staged installer at: $stage"
-Write-Host 'Run Install-GameBarWidget.cmd as Administrator to sideload, then Win+G → Widgets → SC Bridge.'
+Write-Host 'Run Install-GameBarWidget.cmd as Administrator to sideload, then Win+G → Widgets → MistMapper.'

@@ -1,6 +1,6 @@
-using SteamControllerBridge.Shared;
+using MistMapper.Shared;
 
-namespace SteamControllerBridge.Host.Drivers;
+namespace MistMapper.Host.Drivers;
 
 public static class SteamControllerCapabilities
 {
@@ -38,10 +38,10 @@ public static class SteamControllerCapabilities
         Add(PhysicalInput.DpadDown, DriverInputKind.Digital);
         Add(PhysicalInput.DpadLeft, DriverInputKind.Digital);
         Add(PhysicalInput.DpadRight, DriverInputKind.Digital);
-        Add(PhysicalInput.L4, DriverInputKind.Digital);
-        Add(PhysicalInput.L5, DriverInputKind.Digital);
-        Add(PhysicalInput.R4, DriverInputKind.Digital);
-        Add(PhysicalInput.R5, DriverInputKind.Digital);
+        Add(PhysicalInput.L4, DriverInputKind.Digital, name: "L4 (Upper Left Grip)");
+        Add(PhysicalInput.L5, DriverInputKind.Digital, name: "L5 (Lower Left Grip)");
+        Add(PhysicalInput.R4, DriverInputKind.Digital, name: "R4 (Upper Right Grip)");
+        Add(PhysicalInput.R5, DriverInputKind.Digital, name: "R5 (Lower Right Grip)");
         Add(PhysicalInput.Lt, DriverInputKind.Analog, name: "LT");
         Add(PhysicalInput.Rt, DriverInputKind.Analog, name: "RT");
         Add(PhysicalInput.LeftStick, DriverInputKind.Stick);
@@ -74,8 +74,8 @@ public static class SteamControllerCapabilities
         Spot("Rb", 0.66, 0.12, 0.12, 0.05, "rect", "RB");
         Spot("Lt", 0.22, 0.05, 0.12, 0.05, "rect", "LT");
         Spot("Rt", 0.66, 0.05, 0.12, 0.05, "rect", "RT");
-        Spot("View", 0.40, 0.30, 0.06, 0.04, "rect", "View");
-        Spot("Menu", 0.54, 0.30, 0.06, 0.04, "rect", "Menu");
+        Spot("View", 0.40, 0.30, 0.06, 0.04, "rect", "Select");
+        Spot("Menu", 0.54, 0.30, 0.06, 0.04, "rect", "Start");
         Spot("Steam", 0.47, 0.38, 0.06, 0.06, "ellipse", "Steam", remappable: false);
         Spot("LeftStick", 0.28, 0.42, 0.10, 0.12, "ellipse", "LS");
         Spot("RightStick", 0.55, 0.55, 0.10, 0.12, "ellipse", "RS");
@@ -85,10 +85,10 @@ public static class SteamControllerCapabilities
         Spot("DpadDown", 0.38, 0.58, 0.05, 0.05, "rect", "↓");
         Spot("DpadLeft", 0.33, 0.53, 0.05, 0.05, "rect", "←");
         Spot("DpadRight", 0.43, 0.53, 0.05, 0.05, "rect", "→");
-        Spot("L4", 0.08, 0.35, 0.07, 0.10, "rect", "L4");
-        Spot("L5", 0.08, 0.48, 0.07, 0.10, "rect", "L5");
-        Spot("R4", 0.85, 0.35, 0.07, 0.10, "rect", "R4");
-        Spot("R5", 0.85, 0.48, 0.07, 0.10, "rect", "R5");
+        Spot("L4", 0.08, 0.35, 0.07, 0.10, "rect", "L4 Grip");
+        Spot("L5", 0.08, 0.48, 0.07, 0.10, "rect", "L5 Grip");
+        Spot("R4", 0.85, 0.35, 0.07, 0.10, "rect", "R4 Grip");
+        Spot("R5", 0.85, 0.48, 0.07, 0.10, "rect", "R5 Grip");
         Spot("Gyro", 0.47, 0.72, 0.10, 0.06, "rect", "Gyro");
 
         return caps;

@@ -1,0 +1,44 @@
+---
+description: C# coding standards for MistMapper
+globs: "**/*.cs"
+alwaysApply: false
+---
+
+# C# Standards
+
+## Dependency Injection
+
+- Prefer constructor injection over static dependencies.
+- Extract interfaces for testability (e.g. `IKeyboardSink`, `IMouseSink`, `ISteamState`).
+- Use nullable default parameters with singleton fallback for optional deps:
+
+```csharp
+public MappingEngine(IKeyboardSink? keyboard = null, IMouseSink? mouse = null)
+{
+    _keyboard = keyboard ?? Win32KeyboardSink.Instance;
+    _mouse = mouse ?? Win32MouseSink.Instance;
+}
+```
+
+## Class Design
+
+- Mark classes `sealed` unless explicitly designed for inheritance.
+- Mark methods `static` when they don't access instance data (CA1822).
+- Use file-scoped namespaces (`namespace Foo;` not `namespace Foo { }`).
+
+## Formatting
+
+- Use `CultureInfo.InvariantCulture` for `ToString()` on numerics (CA1305):
+
+```csharp
+// Bad
+id.ToString()
+
+// Good
+id.ToString(CultureInfo.InvariantCulture)
+```
+
+## Naming
+
+- CA1716 (namespace conflicts with keywords) is suppressed globally — `Shared` namespace is intentional.
+- Interface names start with `I` and match the concept: `IViiperClient`, `IViiperHealth`, `ISteamState`.

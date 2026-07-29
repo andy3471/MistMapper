@@ -1,10 +1,10 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace SteamControllerBridge.Host.Services;
+namespace MistMapper.Host.Services;
 
 /// <summary>Tracks the foreground window's process for per-game profile switching.</summary>
-public sealed class ForegroundWatcher : IDisposable
+public sealed class ForegroundWatcher : IDisposable, IForegroundState
 {
     readonly System.Threading.Timer _timer;
     readonly object _gate = new();
@@ -69,7 +69,7 @@ public sealed class ForegroundWatcher : IDisposable
 
     static bool IsIgnored(string exe)
     {
-        return exe.Equals("SteamControllerBridge.exe", StringComparison.OrdinalIgnoreCase)
+        return exe.Equals("MistMapper.exe", StringComparison.OrdinalIgnoreCase)
                || exe.Equals("GameBar.exe", StringComparison.OrdinalIgnoreCase)
                || exe.Equals("GameBarFTServer.exe", StringComparison.OrdinalIgnoreCase)
                || exe.Equals("XboxGameBarWidgets.exe", StringComparison.OrdinalIgnoreCase)

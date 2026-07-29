@@ -7,15 +7,15 @@
   IgnorableNamespaces="uap uap3 mp">
 
   <Identity
-    Name="SteamControllerBridge.GameBar"
-    Publisher="CN=SteamControllerBridge"
+    Name="MistMapper.GameBar"
+    Publisher="CN=MistMapper"
     Version="0.1.5.3" />
 
   <mp:PhoneIdentity PhoneProductId="a1b2c3d4-e5f6-7890-abcd-ef1234567890" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
-    <DisplayName>SC Bridge Game Bar</DisplayName>
-    <PublisherDisplayName>Steam Controller Bridge</PublisherDisplayName>
+    <DisplayName>MistMapper Game Bar</DisplayName>
+    <PublisherDisplayName>MistMapper</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
@@ -30,12 +30,12 @@
   <Applications>
     <Application Id="App"
       Executable="$targetnametoken$.exe"
-      EntryPoint="SteamControllerBridge.GameBarWidget.App">
+      EntryPoint="MistMapper.GameBarWidget.App">
       <uap:VisualElements
-        DisplayName="SC Bridge"
+        DisplayName="MistMapper"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png"
-        Description="Steam Controller Bridge remapper for Xbox Game Bar"
+        Description="MistMapper remapper for Xbox Game Bar"
         BackgroundColor="transparent">
         <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" Square71x71Logo="Assets\SmallTile.png" Square310x310Logo="Assets\LargeTile.png"/>
         <uap:SplashScreen Image="Assets\SplashScreen.png" />
@@ -44,9 +44,9 @@
         <uap3:Extension Category="windows.appExtension">
           <uap3:AppExtension
             Name="microsoft.gameBarUIExtension"
-            Id="SteamControllerBridgeWidget"
+            Id="MistMapperWidget"
             PublicFolder="GameBar"
-            DisplayName="SC Bridge"
+            DisplayName="MistMapper"
             Description="Remap Steam Controller paddles and profiles">
             <uap3:Properties>
               <GameBarWidget Type="Standard">

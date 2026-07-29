@@ -6,7 +6,7 @@ using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Navigation;
 
-namespace SteamControllerBridge.GameBarWidget
+namespace MistMapper.GameBarWidget
 {
     sealed partial class App : Application
     {
@@ -14,6 +14,7 @@ namespace SteamControllerBridge.GameBarWidget
 
         public App()
         {
+            RequiresPointerMode = ApplicationRequiresPointerMode.WhenRequested;
             InitializeComponent();
             Suspending += OnSuspending;
             UnhandledException += (_, e) =>

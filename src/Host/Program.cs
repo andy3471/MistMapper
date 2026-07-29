@@ -1,8 +1,8 @@
-namespace SteamControllerBridge.Host;
+namespace MistMapper.Host;
 
 static class Program
 {
-    const string MutexName = "Global\\SteamControllerBridge.Singleton";
+    const string MutexName = "Global\\MistMapper.Singleton";
 
     [STAThread]
     static void Main(string[] args)
@@ -16,8 +16,8 @@ static class Program
         if (!created)
         {
             MessageBox.Show(
-                "Steam Controller Bridge is already running (tray).",
-                "Steam Controller Bridge",
+                "MistMapper is already running (tray).",
+                "MistMapper",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
             return;

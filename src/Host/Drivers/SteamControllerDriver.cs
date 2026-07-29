@@ -1,7 +1,7 @@
-using SteamControllerBridge.Host.Steam;
-using SteamControllerBridge.Shared;
+using MistMapper.Host.Steam;
+using MistMapper.Shared;
 
-namespace SteamControllerBridge.Host.Drivers;
+namespace MistMapper.Host.Drivers;
 
 public sealed class SteamControllerDriver : IControllerDriver
 {
@@ -11,6 +11,9 @@ public sealed class SteamControllerDriver : IControllerDriver
     public string DisplayName => "Steam Controller";
     public DriverCapabilities Capabilities { get; } = SteamControllerCapabilities.Create();
     public bool IsConnected => _device?.IsOpen == true;
+    public int ProductId => _device?.ProductId ?? 0;
+    public string ControllerModel =>
+        _device is null ? "" : SteamControllerDevice.ClassifyModel(_device.ProductId);
 
     public bool TryOpen()
     {

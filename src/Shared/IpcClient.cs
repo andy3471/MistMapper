@@ -2,7 +2,7 @@ using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
 
-namespace SteamControllerBridge.Shared;
+namespace MistMapper.Shared;
 
 public sealed class IpcClient : IDisposable
 {

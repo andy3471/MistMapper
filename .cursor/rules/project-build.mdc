@@ -1,0 +1,32 @@
+---
+description: MSBuild and project configuration standards
+globs: "**/*.csproj,**/Directory.Build.props"
+alwaysApply: false
+---
+
+# Build Configuration
+
+## Global Properties (Directory.Build.props)
+
+These are set globally and must not be duplicated in individual csproj files:
+
+- `LangVersion`: `latest`
+- `AnalysisLevel`: `latest-recommended`
+- `TreatWarningsAsErrors`: `true`
+- `NoWarn`: `CA1716` (namespace naming is intentional)
+
+## New Projects
+
+- Do not set `LangVersion` — inherited from `Directory.Build.props`.
+- Do not set `TreatWarningsAsErrors` — inherited globally.
+- If the project has legitimate warnings to suppress, use `<NoWarn>$(NoWarn);CAXXXX</NoWarn>`.
+
+## Test Projects
+
+- Add `<NoWarn>$(NoWarn);CA1707;CA1716</NoWarn>` for underscored test method names.
+- Set `<IsPackable>false</IsPackable>` and `<IsTestProject>true</IsTestProject>`.
+
+## Artifacts
+
+- Never commit `bin/` or `obj/` folders — these are in `.gitignore`.
+- Published output goes to `publish/` (also gitignored).

@@ -1,6 +1,6 @@
-using SteamControllerBridge.Shared;
+using MistMapper.Shared;
 
-namespace SteamControllerBridge.Widget;
+namespace MistMapper.Widget;
 
 /// <summary>
 /// Lightweight companion that points users to the Game Bar remapper.
@@ -15,7 +15,7 @@ public sealed class WidgetForm : Form
 
     public WidgetForm()
     {
-        Text = "SC Bridge";
+        Text = "MistMapper";
         Width = 460;
         Height = 280;
         StartPosition = FormStartPosition.CenterScreen;
@@ -40,7 +40,7 @@ public sealed class WidgetForm : Form
         };
         var hint = new Label
         {
-            Text = "Press Win+G → Widgets → pin SC Bridge.\nAll button, keyboard, and mouse remapping happens there.",
+            Text = "Press Win+G → Widgets → pin MistMapper.\nAll button, keyboard, and mouse remapping happens there.",
             AutoSize = true,
             MaximumSize = new Size(400, 0),
             ForeColor = Color.Silver,
@@ -83,7 +83,7 @@ public sealed class WidgetForm : Form
             }
             catch (Exception ex)
             {
-                _status.Text = "Host not running. Start SteamControllerBridge.exe first.\n" + ex.Message;
+                _status.Text = "Host not running. Start MistMapper.exe first.\n" + ex.Message;
             }
         };
         FormClosed += (_, _) =>

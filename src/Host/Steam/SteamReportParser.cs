@@ -1,7 +1,7 @@
 using System.Buffers.Binary;
-using SteamControllerBridge.Shared;
+using MistMapper.Shared;
 
-namespace SteamControllerBridge.Host.Steam;
+namespace MistMapper.Host.Steam;
 
 /// <summary>Parses Steam Controller 2026 vendor HID state reports (0x42 / 0x45).</summary>
 public static class SteamReportParser

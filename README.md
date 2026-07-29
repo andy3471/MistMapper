@@ -1,18 +1,25 @@
-# Steam Controller Bridge
+# MistMapper
 
-Turns the **2026 Steam Controller** into a virtual **Xbox 360** pad (plus optional keyboard/mouse) when Steam is closed, with per-game profiles and remapping from a tray remapper or **Xbox Game Bar** widget.
+Use a **Steam Controller on Windows** without Steam Input — with a **Steam Input–like remapper** that lives in an **Xbox Game Bar** widget (Win+G).
+
+MistMapper reads the physical Steam Controller, lets you map buttons / pads / sticks / gyro the way you’d expect from Steam’s controller UI, and exposes the result as a virtual **Xbox 360** pad (plus optional keyboard and mouse). That means games and Windows see a normal XInput controller even when Steam is closed.
+
+## Status / disclaimer
+
+This project is largely a **vibe-coded proof of concept**, built with **heavy AI assistance**. It works well enough to explore the idea, but the codebase is uneven: naming, structure, and polish still need a real pass.
+
+Expect rough edges, incomplete features, and opportunistic design choices. **It will be cleaned up in the future** — refactors, tests, and clearer architecture — once the product shape settles. Treat it as experimental software, not a finished product.
 
 ## What it does
 
 | Piece | Role |
 |-------|------|
-| **Host** (`SteamControllerBridge.exe`) | Tray app: driver → map → VIIPER / keyboard / mouse (status only — remap in Game Bar) |
+| **Host** (`MistMapper.exe`) | Tray app: Steam Controller → mapping → VIIPER virtual Xbox pad / keyboard / mouse |
+| **Game Bar widget** | Steam Input–style view & edit UI (controller layout, remaps, sensitivity, profiles) |
 | **Driver model** | Steam Controller is the first `IControllerDriver` (more can plug in later) |
-| **Desktop Widget** | Lightweight companion; remapping is in Game Bar |
-| **Game Bar Widget** | UWP Win+G visual controller map + remapper (`src/GameBarWidget`) |
-| **FseHome** | Optional Path 3 thin launcher for Xbox FSE |
+| **FseHome** | Optional thin launcher for Xbox Full Screen Experience |
 
-Steam Input is **not** used while Steam is closed. Remapping is app-owned.
+Steam’s own Steam Input stack is **not** used while Steam is closed. Remapping is owned by MistMapper and configured from the Game Bar widget.
 
 ## Prerequisites
 
@@ -34,7 +41,7 @@ If VIIPER is not running, the host shows an **error** (tray balloon, remapper ba
 ## Build (desktop)
 
 ```powershell
-dotnet build SteamControllerBridge.sln -c Release
+dotnet build MistMapper.sln -c Release
 ```
 
 ## Install Game Bar widget (Win+G)
@@ -46,7 +53,7 @@ cd .\publish\GameBarWidget
 .\Install-GameBarWidget.cmd   # elevated
 ```
 
-Then start the host, press **Win+G**, and pin **SC Bridge**.
+Then start the host, press **Win+G**, and pin **MistMapper**.
 
 Full details: [docs/setup.md](docs/setup.md).
 
@@ -54,12 +61,12 @@ Full details: [docs/setup.md](docs/setup.md).
 
 ```powershell
 viiper server
-.\src\Host\bin\Release\net8.0-windows\SteamControllerBridge.exe --ui
+.\src\Host\bin\Release\net8.0-windows\MistMapper.exe --ui
 ```
 
 ## Profiles
 
-- Stored in `%AppData%\SteamControllerBridge\profiles.json`
+- Stored in `%AppData%\MistMapper\profiles.json`
 - Map any remappable input to **Xbox**, **keyboard** (optional modifiers), or **mouse button**
 - **Official layouts** (Steam Input–style): Gamepad, Desktop, Mouse Joystick, Keyboard & Mouse, Racing — create from the Game Bar widget
 - **New / Duplicate / Rename / Delete** profiles in the Game Bar widget
@@ -69,10 +76,6 @@ viiper server
 ## FSE / Xbox mode startup
 
 See [docs/setup.md](docs/setup.md) for Path 1 (Start at log in), Path 2 (AnyFSE), Path 3 (FseHome), and logon/lock lizard mode.
-
-## Future rename
-
-Product branding may move away from “Steam Controller Bridge” when more drivers land. Checklist: assembly names, Appx identity/cert, AppData folder migration, pipe name, docs. Architecture already uses neutral driver ids (`steam-controller`).
 
 ## License
 

@@ -1,6 +1,6 @@
 # Game Bar widget
 
-UWP Xbox Game Bar remapper for Steam Controller Bridge.
+UWP Xbox Game Bar remapper for MistMapper.
 
 ## Build & install
 
@@ -11,4 +11,4 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-gamebar-widget.ps1
 .\publish\GameBarWidget\Install-GameBarWidget.cmd
 ```
 
-Keep `SteamControllerBridge.exe` running, then **Win+G** → pin **SC Bridge**.
+Keep `MistMapper.exe` running, then **Win+G** → pin **MistMapper**.

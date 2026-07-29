@@ -1,7 +1,7 @@
-using SteamControllerBridge.Host.Services;
-using SteamControllerBridge.Shared;
+using MistMapper.Host.Services;
+using MistMapper.Shared;
 
-namespace SteamControllerBridge.Host.UI;
+namespace MistMapper.Host.UI;
 
 /// <summary>
 /// Host status panel only — remapping lives in the Game Bar widget (Win+G).
@@ -23,7 +23,7 @@ public sealed class RemapperForm : Form
     };
     readonly Label _title = new()
     {
-        Text = "Steam Controller Bridge",
+        Text = "MistMapper",
         AutoSize = true,
         Font = new Font("Segoe UI Semibold", 16f),
         ForeColor = Color.FromArgb(240, 240, 244)
@@ -62,7 +62,7 @@ public sealed class RemapperForm : Form
         _profiles = profiles;
         _bridge = bridge;
 
-        Text = "Steam Controller Bridge";
+        Text = "MistMapper";
         Width = 460;
         Height = 380;
         StartPosition = FormStartPosition.CenterScreen;
@@ -82,7 +82,7 @@ public sealed class RemapperForm : Form
 
         _hint.Text =
             "Remapping lives in Xbox Game Bar.\n\n" +
-            "Press Win+G → open the Widgets menu → pin SC Bridge.\n" +
+            "Press Win+G → open the Widgets menu → pin MistMapper.\n" +
             "Tap controls on the controller map to bind Xbox, keyboard, or mouse.";
 
         var openHelp = new Button
@@ -102,11 +102,11 @@ public sealed class RemapperForm : Form
                 this,
                 "1. Make sure this tray host is running.\n" +
                 "2. Press Win+G to open Xbox Game Bar.\n" +
-                "3. Open the Widget menu and pin SC Bridge.\n" +
+                "3. Open the Widget menu and pin MistMapper.\n" +
                 "4. Use the visual controller map to remap.\n\n" +
                 "If the widget is missing, run:\n" +
                 "publish\\GameBarWidget\\Install-GameBarWidget.cmd",
-                "Open SC Bridge in Game Bar",
+                "Open MistMapper in Game Bar",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
         };

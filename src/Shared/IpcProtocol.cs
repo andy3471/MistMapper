@@ -1,11 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace SteamControllerBridge.Shared;
+namespace MistMapper.Shared;
 
 public static class IpcProtocol
 {
-    public const string PipeName = "SteamControllerBridge.Ipc";
+    public const string PipeName = "MistMapper.Ipc";
     public const int ProtocolVersion = 2;
 
     public static readonly JsonSerializerOptions JsonOptions = new()
@@ -48,6 +48,10 @@ public static class IpcCommands
     public const string BindProfileToGame = "bindProfileToGame";
     public const string CreateDefaultProfiles = "createDefaultProfiles";
     public const string GetDriverCapabilities = "getDriverCapabilities";
+    public const string SetSensitivity = "setSensitivity";
+    public const string GetControllerSlots = "getControllerSlots";
+    public const string SetControllerSlotOrder = "setControllerSlotOrder";
+    public const string SetControllerSlotProfile = "setControllerSlotProfile";
 }
 
 public sealed class RemapButtonPayload
@@ -106,4 +110,36 @@ public sealed class ProfilesPayload
     public string ActiveProfileId { get; set; } = "";
     public List<ControllerProfile> Profiles { get; set; } = [];
     public List<ProfileBinding> ProfileBindings { get; set; } = [];
+}
+
+public sealed class SensitivityPayload
+{
+    public string ProfileId { get; set; } = "";
+    public float? StickDeadzone { get; set; }
+    public float? TriggerDeadzone { get; set; }
+    public float? TrackpadDeadzone { get; set; }
+    public float? StickSensitivityX { get; set; }
+    public float? StickSensitivityY { get; set; }
+    public float? TrackpadSensitivityX { get; set; }
+    public float? TrackpadSensitivityY { get; set; }
+    public float? GyroSensitivity { get; set; }
+    public float? GyroSensitivityX { get; set; }
+    public float? GyroSensitivityY { get; set; }
+    public bool? InvertStickX { get; set; }
+    public bool? InvertStickY { get; set; }
+    public bool? InvertTrackpadX { get; set; }
+    public bool? InvertTrackpadY { get; set; }
+    public bool? InvertGyroX { get; set; }
+    public bool? InvertGyroY { get; set; }
+}
+
+public sealed class SetControllerSlotOrderPayload
+{
+    public List<ControllerSlot> Slots { get; set; } = [];
+}
+
+public sealed class SetControllerSlotProfilePayload
+{
+    public string DriverId { get; set; } = "";
+    public string? ProfileId { get; set; }
 }

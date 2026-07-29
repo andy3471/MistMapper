@@ -1,4 +1,4 @@
-namespace SteamControllerBridge.Shared;
+namespace MistMapper.Shared;
 
 public enum BridgeRunState
 {
@@ -27,6 +27,8 @@ public sealed class BridgeStatus
     /// <summary>When true, bridge pauses while Steam.exe is running.</summary>
     public bool AutoPauseWhenSteamRunning { get; set; } = true;
     public bool ControllerConnected { get; set; }
+    /// <summary>"sc1" (2015), "sc2" (2026), or "" when unknown/disconnected.</summary>
+    public string ControllerModel { get; set; } = "";
     public bool SteamRunning { get; set; }
     public bool SessionLocked { get; set; }
     public bool ViiperConnected { get; set; }

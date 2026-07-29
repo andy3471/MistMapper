@@ -1,4 +1,4 @@
-namespace SteamControllerBridge.Shared;
+namespace MistMapper.Shared;
 
 /// <summary>Physical Steam Controller 2026 inputs that can be remapped.</summary>
 public enum PhysicalInput
@@ -64,7 +64,10 @@ public enum TrackpadMode
     AsMouse,
     AsLeftStick,
     AsRightStick,
-    AsDpad
+    AsDpad,
+    FlickStick,
+    ScrollWheel,
+    ButtonPad
 }
 
 public enum GyroMode

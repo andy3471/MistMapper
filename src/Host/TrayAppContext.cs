@@ -1,7 +1,7 @@
-using SteamControllerBridge.Host.Services;
-using SteamControllerBridge.Host.UI;
+using MistMapper.Host.Services;
+using MistMapper.Host.UI;
 
-namespace SteamControllerBridge.Host;
+namespace MistMapper.Host;
 
 public sealed class TrayAppContext : ApplicationContext
 {
@@ -26,12 +26,12 @@ public sealed class TrayAppContext : ApplicationContext
         StartupRegistration.SetEnabled(_profiles.Document.StartWithWindows);
         StartupRegistration.WriteFseHelperScript(
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "SteamControllerBridge"));
+                "MistMapper"));
 
         _tray = new NotifyIcon
         {
             Visible = true,
-            Text = "Steam Controller Bridge",
+            Text = "MistMapper",
             Icon = SystemIcons.Application,
             ContextMenuStrip = BuildMenu()
         };
@@ -76,9 +76,9 @@ public sealed class TrayAppContext : ApplicationContext
         menu.Items.Add("Remap in Game Bar (Win+G)", null, (_, _) =>
         {
             MessageBox.Show(
-                "Press Win+G, open the Widgets menu, and pin SC Bridge.\n" +
+                "Press Win+G, open the Widgets menu, and pin MistMapper.\n" +
                 "All remapping happens in that widget.",
-                "SC Bridge",
+                "MistMapper",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
         });
@@ -101,8 +101,8 @@ public sealed class TrayAppContext : ApplicationContext
         {
             var viiper = status.Dependencies.FirstOrDefault(d => d.Id == "viiper");
             var tip = status.State == Shared.BridgeRunState.Error && viiper is { Ok: false }
-                ? $"SC Bridge — VIIPER missing"
-                : $"SC Bridge — {status.State}";
+                ? $"MistMapper — VIIPER missing"
+                : $"MistMapper — {status.State}";
             _tray.Text = Truncate(tip, 63);
             _tray.Icon = status.State == Shared.BridgeRunState.Error
                 ? SystemIcons.Error

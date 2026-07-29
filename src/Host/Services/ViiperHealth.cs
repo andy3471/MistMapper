@@ -2,13 +2,16 @@ using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text;
 
-namespace SteamControllerBridge.Host.Services;
+namespace MistMapper.Host.Services;
 
 /// <summary>Probes whether VIIPER's management API is listening, and can start a local install.</summary>
-public static class ViiperHealth
+public sealed class ViiperHealth : IViiperHealth
 {
-    public const string DependencyId = "viiper";
-    public const string DisplayName = "VIIPER";
+    public string DependencyId => DependencyIdValue;
+    public string DisplayName => DisplayNameValue;
+
+    public const string DependencyIdValue = "viiper";
+    public const string DisplayNameValue = "VIIPER";
     public const string Host = "127.0.0.1";
     public const int Port = 3242;
 
@@ -18,7 +21,7 @@ public static class ViiperHealth
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "VIIPER", "viiper.exe");
 
-    public static async Task<(bool Ok, string Detail)> ProbeAsync(CancellationToken ct = default)
+    public async Task<(bool Ok, string Detail)> ProbeAsync(CancellationToken ct = default)
     {
         try
         {
@@ -58,7 +61,7 @@ public static class ViiperHealth
     /// If the API is down and a local install exists, start <c>viiper server</c> (throttled).
     /// Does not download VIIPER — use scripts/install-viiper.ps1 for that (GPL-3.0).
     /// </summary>
-    public static async Task<(bool Ok, string Detail)> EnsureRunningAsync(CancellationToken ct = default)
+    public async Task<(bool Ok, string Detail)> EnsureRunningAsync(CancellationToken ct = default)
     {
         var probe = await ProbeAsync(ct);
         if (probe.Ok) return probe;

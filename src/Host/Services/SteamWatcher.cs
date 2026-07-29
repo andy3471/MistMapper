@@ -1,8 +1,8 @@
 using System.Diagnostics;
 
-namespace SteamControllerBridge.Host.Services;
+namespace MistMapper.Host.Services;
 
-public sealed class SteamWatcher : IDisposable
+public sealed class SteamWatcher : IDisposable, ISteamState
 {
     readonly System.Threading.Timer _timer;
     bool _running;
@@ -39,7 +39,7 @@ public sealed class SteamWatcher : IDisposable
     public void Dispose() => _timer.Dispose();
 }
 
-public sealed class SessionWatcher : IDisposable
+public sealed class SessionWatcher : IDisposable, ISessionState
 {
     bool _locked;
 

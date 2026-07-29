@@ -1,0 +1,47 @@
+---
+description: IPC protocol conventions for host-widget communication
+globs: "**/Shared/Ipc*.cs,**/Services/IpcServer.cs"
+alwaysApply: false
+---
+
+# IPC Protocol Conventions
+
+## Architecture
+
+- Host ↔ Widget communication uses newline-delimited JSON over named pipe `MistMapper.Ipc`.
+- Game Bar widget uses file-based IPC (UWP sandbox constraint) via `widget-state.json` / `widget-request.txt`.
+
+## Adding a New Command
+
+1. Add a `public const string` to `IpcCommands` in `src/Shared/IpcProtocol.cs`.
+2. Create a strongly typed payload class in the same file (properties use PascalCase, serialized as camelCase).
+3. Add a `case` in `IpcServer.Dispatch()` that deserializes the payload and calls the appropriate service method.
+4. JSON options: use `IpcProtocol.JsonOptions` (camelCase, string enums, ignore nulls).
+
+## Payload Classes
+
+- One class per command payload (e.g. `SensitivityPayload`, `SetActiveProfilePayload`).
+- Nullable properties for partial updates (e.g. `float? StickDeadzone`).
+- Always deserialize with `Deserialize<T>(request.Payload)` helper in `IpcServer`.
+
+## Example
+
+```csharp
+// 1. Command constant
+public const string SetSensitivity = "setSensitivity";
+
+// 2. Payload class
+public sealed class SensitivityPayload
+{
+    public string ProfileId { get; set; } = "";
+    public float? StickDeadzone { get; set; }
+}
+
+// 3. Dispatch case
+case IpcCommands.SetSensitivity:
+{
+    var p = Deserialize<SensitivityPayload>(request.Payload);
+    _profiles.SetSensitivity(p.ProfileId, p);
+    break;
+}
+```

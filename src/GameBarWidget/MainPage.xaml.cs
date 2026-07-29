@@ -1,6 +1,6 @@
 using Windows.UI.Xaml.Controls;
 
-namespace SteamControllerBridge.GameBarWidget
+namespace MistMapper.GameBarWidget
 {
     public sealed partial class MainPage : Page
     {

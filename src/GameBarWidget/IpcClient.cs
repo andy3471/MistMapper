@@ -2,7 +2,7 @@ using System;
 using System.Threading.Tasks;
 using Windows.Storage;
 
-namespace SteamControllerBridge.GameBarWidget
+namespace MistMapper.GameBarWidget
 {
     sealed class BridgeResponse
     {
@@ -114,7 +114,7 @@ namespace SteamControllerBridge.GameBarWidget
             return new BridgeResponse
             {
                 IsOk = false,
-                Error = "Timed out waiting for SteamControllerBridge host."
+                Error = "Timed out waiting for MistMapper host."
             };
         }
     }

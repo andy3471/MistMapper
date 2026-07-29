@@ -1,9 +1,9 @@
-using SteamControllerBridge.Host.Drivers;
-using SteamControllerBridge.Host.Mapping;
-using SteamControllerBridge.Host.Viiper;
-using SteamControllerBridge.Shared;
+using MistMapper.Host.Drivers;
+using MistMapper.Host.Mapping;
+using MistMapper.Host.Viiper;
+using MistMapper.Shared;
 
-namespace SteamControllerBridge.Host.Services;
+namespace MistMapper.Host.Services;
 
 /// <summary>
 /// Orchestrates driver → map → sinks, Steam pause, session lock, per-game profiles, VIIPER health.
@@ -13,17 +13,20 @@ namespace SteamControllerBridge.Host.Services;
 public sealed class BridgeService : IDisposable
 {
     readonly ProfileService _profiles;
-    readonly SteamWatcher _steam;
-    readonly SessionWatcher _session;
-    readonly ForegroundWatcher _foreground;
-    readonly GameBarWatcher _gameBar;
+    readonly ISteamState _steam;
+    readonly ISessionState _session;
+    readonly IForegroundState _foreground;
+    readonly IGameBarState _gameBar;
     readonly DriverRegistry _drivers;
-    readonly MappingEngine _mapper = new();
+    readonly IViiperHealth _viiperHealth;
+    readonly Func<IViiperClient> _viiperFactory;
+    readonly IMouseSink _mouse;
+    readonly MappingEngine _mapper;
     readonly ControllerProfile _gameBarGamepadProfile = OfficialLayouts.CreateGamepad();
     readonly object _gate = new();
 
     IControllerDriver? _activeDriver;
-    ViiperXbox360Client? _viiper;
+    IViiperClient? _viiper;
     CancellationTokenSource? _cts;
     Task? _loop;
     BridgeStatus _status = new();
@@ -31,8 +34,6 @@ public sealed class BridgeService : IDisposable
     DateTime _lastViiperProbe = DateTime.MinValue;
     DependencyStatus _viiperDep = new()
     {
-        Id = ViiperHealth.DependencyId,
-        DisplayName = ViiperHealth.DisplayName,
         Ok = false,
         Detail = "Not checked yet"
     };
@@ -50,11 +51,15 @@ public sealed class BridgeService : IDisposable
 
     public BridgeService(
         ProfileService profiles,
-        SteamWatcher steam,
-        SessionWatcher session,
-        ForegroundWatcher? foreground = null,
-        GameBarWatcher? gameBar = null,
-        DriverRegistry? drivers = null)
+        ISteamState steam,
+        ISessionState session,
+        IForegroundState? foreground = null,
+        IGameBarState? gameBar = null,
+        DriverRegistry? drivers = null,
+        MappingEngine? mapper = null,
+        IMouseSink? mouse = null,
+        IViiperHealth? viiperHealth = null,
+        Func<IViiperClient>? viiperFactory = null)
     {
         _profiles = profiles;
         _steam = steam;
@@ -62,6 +67,12 @@ public sealed class BridgeService : IDisposable
         _foreground = foreground ?? new ForegroundWatcher();
         _gameBar = gameBar ?? new GameBarWatcher();
         _drivers = drivers ?? new DriverRegistry();
+        _mouse = mouse ?? Win32MouseSink.Instance;
+        _mapper = mapper ?? new MappingEngine(mouse: _mouse);
+        _viiperHealth = viiperHealth ?? new ViiperHealth();
+        _viiperFactory = viiperFactory ?? (() => new ViiperXbox360Client());
+        _viiperDep.Id = _viiperHealth.DependencyId;
+        _viiperDep.DisplayName = _viiperHealth.DisplayName;
         _gameBarGamepadProfile.Name = "Gamepad (Game Bar override)";
         _steam.Changed += _ => PublishStatus();
         _gameBar.Changed += _ => PublishStatus();
@@ -200,7 +211,7 @@ public sealed class BridgeService : IDisposable
                 if (!_viiperDep.Ok)
                 {
                     PublishStatus(BridgeRunState.Error, "VIIPER missing — trying to start local install…");
-                    var ensured = await ViiperHealth.EnsureRunningAsync(ct);
+                    var ensured = await _viiperHealth.EnsureRunningAsync(ct);
                     _viiperDep.Ok = ensured.Ok;
                     _viiperDep.Detail = ensured.Detail;
                     if (!ensured.Ok)
@@ -249,7 +260,7 @@ public sealed class BridgeService : IDisposable
                     try
                     {
                         _viiper?.Dispose();
-                        _viiper = new ViiperXbox360Client();
+                        _viiper = _viiperFactory();
                         using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                         connectCts.CancelAfter(TimeSpan.FromSeconds(20));
                         await _viiper.ConnectAsync(connectCts.Token);
@@ -287,7 +298,7 @@ public sealed class BridgeService : IDisposable
                     _viiper!.SendInput(xbox);
 
                     if (_mapper.TryConsumeMouseDelta(out int dx, out int dy))
-                        MouseInjector.Move(dx, dy);
+                        _mouse.Move(dx, dy);
 
                     lock (_gate)
                         _pressed = frame.PressedDigitalIds().ToList();
@@ -337,7 +348,7 @@ public sealed class BridgeService : IDisposable
         if ((DateTime.UtcNow - _lastViiperProbe).TotalSeconds < 2 && _viiper?.IsConnected == true)
             return;
         _lastViiperProbe = DateTime.UtcNow;
-        var (ok, detail) = await ViiperHealth.ProbeAsync(ct);
+        var (ok, detail) = await _viiperHealth.ProbeAsync(ct);
         var wasOk = _viiperDep.Ok;
         _viiperDep.Ok = ok || _viiper?.IsConnected == true;
         if (!_viiperDep.Ok)
@@ -356,7 +367,7 @@ public sealed class BridgeService : IDisposable
         return true;
     }
 
-    bool IsGameBarOverrideActive()
+    static bool IsGameBarOverrideActive()
     {
         // Disabled: Game Bar / widget processes often keep the widget "Visible"
         // (or keep heartbeating) after the overlay is dismissed, which stuck the
@@ -405,6 +416,9 @@ public sealed class BridgeService : IDisposable
             _status.BridgeEnabled = _profiles.BridgeEnabled;
             _status.AutoPauseWhenSteamRunning = _profiles.AutoPauseWhenSteamRunning;
             _status.ControllerConnected = _activeDriver?.IsConnected == true;
+            _status.ControllerModel = _activeDriver is Drivers.SteamControllerDriver sc
+                ? sc.ControllerModel
+                : "";
             _status.SteamRunning = _steam.IsSteamRunning;
             _status.SessionLocked = _session.IsLocked;
             _status.ViiperConnected = _viiper?.IsConnected == true;
@@ -442,6 +456,7 @@ public sealed class BridgeService : IDisposable
         BridgeEnabled = s.BridgeEnabled,
         AutoPauseWhenSteamRunning = s.AutoPauseWhenSteamRunning,
         ControllerConnected = s.ControllerConnected,
+        ControllerModel = s.ControllerModel,
         SteamRunning = s.SteamRunning,
         SessionLocked = s.SessionLocked,
         ViiperConnected = s.ViiperConnected,

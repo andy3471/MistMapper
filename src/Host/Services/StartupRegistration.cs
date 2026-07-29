@@ -1,6 +1,6 @@
 using Microsoft.Win32;
 
-namespace SteamControllerBridge.Host.Services;
+namespace MistMapper.Host.Services;
 
 /// <summary>
 /// Registers the host for logon startup. Documents FSE "Start at log in" requirement.
@@ -8,10 +8,10 @@ namespace SteamControllerBridge.Host.Services;
 public static class StartupRegistration
 {
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    const string ValueName = "SteamControllerBridge";
+    const string ValueName = "MistMapper";
 
     public static string ExePath =>
-        Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "SteamControllerBridge.exe");
+        Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "MistMapper.exe");
 
     public static bool IsEnabled()
     {
@@ -23,6 +23,8 @@ public static class StartupRegistration
     {
         using var key = Registry.CurrentUser.OpenSubKey(RunKey, true)
                         ?? Registry.CurrentUser.CreateSubKey(RunKey);
+        // Drop legacy product name so users don't get two startup entries.
+        key.DeleteValue("SteamControllerBridge", throwOnMissingValue: false);
         if (enabled)
             key.SetValue(ValueName, $"\"{ExePath}\" --tray");
         else
@@ -39,28 +41,28 @@ public static class StartupRegistration
         Directory.CreateDirectory(directory);
         var script = Path.Combine(directory, "enable-fse-startup.ps1");
         File.WriteAllText(script, """
-            # Steam Controller Bridge — FSE / Xbox mode startup helper (Path 1)
+            # MistMapper — FSE / Xbox mode startup helper (Path 1)
             # 1) Ensures HKCU Run registration (Start at logon)
             # 2) Prints instructions for Settings > Apps > Startup > "Start at log in"
             #    so the host runs inside Xbox Full Screen Experience.
 
-            $exe = Join-Path $PSScriptRoot '..\SteamControllerBridge.exe'
+            $exe = Join-Path $PSScriptRoot '..\MistMapper.exe'
             if (-not (Test-Path $exe)) {
-              $exe = (Get-Command SteamControllerBridge -ErrorAction SilentlyContinue)?.Source
+              $exe = (Get-Command MistMapper -ErrorAction SilentlyContinue)?.Source
             }
             if (-not $exe -or -not (Test-Path $exe)) {
-              Write-Error 'SteamControllerBridge.exe not found. Build/publish the Host first.'
+              Write-Error 'MistMapper.exe not found. Build/publish the Host first.'
               exit 1
             }
 
             $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
             New-Item -Path $run -Force | Out-Null
-            Set-ItemProperty -Path $run -Name 'SteamControllerBridge' -Value ('"{0}" --tray' -f (Resolve-Path $exe))
+            Set-ItemProperty -Path $run -Name 'MistMapper' -Value ('"{0}" --tray' -f (Resolve-Path $exe))
             Write-Host "Registered Run key for: $exe"
 
             Write-Host ""
             Write-Host "Xbox mode / FSE (Path 1):"
-            Write-Host "  Settings > Apps > Startup > Steam Controller Bridge > Start at log in"
+            Write-Host "  Settings > Apps > Startup > MistMapper > Start at log in"
             Write-Host "Do NOT choose 'Start when exiting to desktop'."
             Write-Host ""
             Write-Host "AnyFSE (Path 2): set custom startup application to this exe."

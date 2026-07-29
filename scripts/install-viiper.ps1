@@ -6,7 +6,7 @@
 .DESCRIPTION
   VIIPER is a separate project (https://github.com/Alia5/VIIPER). We do not vendor its
   binaries in this repo (GPL-3.0). This script fetches the official Windows release and
-  can keep "viiper server" running for Steam Controller Bridge.
+  can keep "viiper server" running for MistMapper.
 
   Still required separately: usbip-win2 (signed USBIP driver).
 #>

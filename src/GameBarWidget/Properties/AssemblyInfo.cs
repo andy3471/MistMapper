@@ -1,10 +1,10 @@
 using System.Reflection;
 
-[assembly: AssemblyTitle("SteamControllerBridge.GameBarWidget")]
-[assembly: AssemblyDescription("Xbox Game Bar remapper for Steam Controller Bridge")]
+[assembly: AssemblyTitle("MistMapper.GameBarWidget")]
+[assembly: AssemblyDescription("Xbox Game Bar remapper for MistMapper")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("Steam Controller Bridge")]
-[assembly: AssemblyProduct("SteamControllerBridge.GameBarWidget")]
+[assembly: AssemblyCompany("MistMapper")]
+[assembly: AssemblyProduct("MistMapper.GameBarWidget")]
 [assembly: AssemblyCopyright("")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]

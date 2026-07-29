@@ -1,7 +1,7 @@
 using HidSharp;
 using HidSharp.Reports;
 
-namespace SteamControllerBridge.Host.Steam;
+namespace MistMapper.Host.Steam;
 
 /// <summary>
 /// Opens the Steam Controller 2026 vendor HID interface, toggles lizard mode,
@@ -10,7 +10,12 @@ namespace SteamControllerBridge.Host.Steam;
 public sealed class SteamControllerDevice : IDisposable
 {
     public const int ValveVid = 0x28DE;
-    public static readonly int[] ProductIds = [0x1302, 0x1303, 0x1304];
+    /// <summary>Steam Controller 2026 (SC2) product IDs.</summary>
+    public static readonly int[] Sc2ProductIds = [0x1302, 0x1303, 0x1304];
+    /// <summary>Original Steam Controller 2015 (SC1) product IDs.</summary>
+    public static readonly int[] Sc1ProductIds = [0x1102, 0x1142];
+    /// <summary>IDs the host currently opens (SC2). SC1 listed for model detection / future support.</summary>
+    public static readonly int[] ProductIds = Sc2ProductIds;
 
     public const int VendorUsagePage = 0xFF00;
 
@@ -20,10 +25,13 @@ public sealed class SteamControllerDevice : IDisposable
     const byte CmdSetDefaultMappings = 0x85;
     const byte CmdSetSettings = 0x87;
     const byte CmdLoadDefaultSettings = 0x8E;
-    const byte SettingRightTrackpadMode = 0x07;
-    const byte SettingLeftTrackpadMode = 0x08;
+    // Valve settings IDs (see linux hid-steam.c)
+    const byte SettingLeftTrackpadMode = 0x07;
+    const byte SettingRightTrackpadMode = 0x08;
     const byte SettingImuMode = 0x30;
-    const byte TrackpadNone = 0x00;
+    const byte SettingSteamWatchdogEnable = 0x47; // 71
+    /// <summary>TRACKPAD_NONE in Valve firmware — not 0 (0 = ABSOLUTE_MOUSE).</summary>
+    const byte TrackpadNone = 0x07;
 
     HidDevice? _device;
     HidStream? _stream;
@@ -32,6 +40,14 @@ public sealed class SteamControllerDevice : IDisposable
 
     public bool IsOpen => _stream is not null;
     public string? DevicePath => _device?.DevicePath;
+    public int ProductId => _device?.ProductID ?? 0;
+
+    public static string ClassifyModel(int productId)
+    {
+        if (Sc2ProductIds.Contains(productId)) return "sc2";
+        if (Sc1ProductIds.Contains(productId)) return "sc1";
+        return "";
+    }
 
     public static IEnumerable<HidDevice> Enumerate()
     {
@@ -44,6 +60,9 @@ public sealed class SteamControllerDevice : IDisposable
             bool include = false;
             try
             {
+                if (dev.GetMaxFeatureReportLength() < 64)
+                    continue;
+
                 var report = dev.GetReportDescriptor();
                 foreach (var deviceItem in report.DeviceItems)
                 {
@@ -62,13 +81,18 @@ public sealed class SteamControllerDevice : IDisposable
             }
             catch
             {
-                include = dev.GetMaxInputReportLength() >= 30;
+                include = dev.GetMaxInputReportLength() >= 30
+                    && dev.GetMaxFeatureReportLength() >= 64;
             }
 
             if (include)
                 results.Add(dev);
         }
-        return results;
+
+        // Prefer collections that typically accept lizard-mode feature reports (col03).
+        return results
+            .OrderByDescending(d => d.DevicePath?.Contains("col03", StringComparison.OrdinalIgnoreCase) == true)
+            .ThenBy(d => d.DevicePath, StringComparer.OrdinalIgnoreCase);
     }
 
     public bool Open()
@@ -84,18 +108,32 @@ public sealed class SteamControllerDevice : IDisposable
 
     bool TryOpen(HidDevice device)
     {
+        HidStream? stream = null;
         try
         {
-            if (!device.TryOpen(out var stream))
+            if (!device.TryOpen(out stream))
                 return false;
             stream.ReadTimeout = 50;
             stream.WriteTimeout = 200;
             _device = device;
             _stream = stream;
+
+            // SC2 exposes several vendor-looking HID collections; only some accept
+            // feature reports. Reject interfaces where lizard disable cannot be sent,
+            // otherwise we "connect" while keyboard/mouse lizard mode stays on.
+            if (!DisableLizardMode())
+            {
+                Close();
+                return false;
+            }
+
             return true;
         }
         catch
         {
+            try { stream?.Dispose(); } catch { /* ignore */ }
+            _stream = null;
+            _device = null;
             return false;
         }
     }
@@ -112,16 +150,20 @@ public sealed class SteamControllerDevice : IDisposable
         if (_stream is null) return false;
         bool ok = SendCommand(CmdClearDigitalMappings, ReadOnlySpan<byte>.Empty);
         // Trackpads to NONE so firmware stops mouse emulation.
-        Span<byte> settings = stackalloc byte[9];
+        // Also disable the Steam-presence watchdog (Deck/SC2) that re-enables lizard.
+        Span<byte> settings = stackalloc byte[12];
         settings[0] = SettingLeftTrackpadMode;
         settings[1] = TrackpadNone;
         settings[2] = 0;
         settings[3] = SettingRightTrackpadMode;
         settings[4] = TrackpadNone;
         settings[5] = 0;
-        settings[6] = SettingImuMode;
-        settings[7] = 0x18; // raw accel+gyro low byte
-        settings[8] = 0x00;
+        settings[6] = SettingSteamWatchdogEnable;
+        settings[7] = 0;
+        settings[8] = 0;
+        settings[9] = SettingImuMode;
+        settings[10] = 0x18; // raw accel+gyro low byte
+        settings[11] = 0x00;
         ok &= SendCommand(CmdSetSettings, settings);
         return ok;
     }
@@ -136,7 +178,7 @@ public sealed class SteamControllerDevice : IDisposable
 
     public bool SendKeepalive() => DisableLizardMode();
 
-    public bool TryReadState(out SteamControllerBridge.Shared.SteamControllerState state, int timeoutMs = 50)
+    public bool TryReadState(out MistMapper.Shared.SteamControllerState state, int timeoutMs = 50)
     {
         state = new();
         if (_stream is null) return false;

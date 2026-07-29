@@ -1,18 +1,26 @@
-using SteamControllerBridge.Host.Viiper;
-using SteamControllerBridge.Shared;
+using MistMapper.Host.Viiper;
+using MistMapper.Shared;
 
-namespace SteamControllerBridge.Host.Mapping;
+namespace MistMapper.Host.Mapping;
 
 public sealed class MappingEngine
 {
     /// <summary>Pixels of cursor travel for a full-pad finger swipe (normalized Δ≈2).</summary>
     const float TrackpadMouseSensitivity = 900f;
 
+    readonly IKeyboardSink _keyboard;
+    readonly IMouseSink _mouse;
     double _mouseAccumX;
     double _mouseAccumY;
     readonly Dictionary<string, (float X, float Y)> _padMouseLast = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> _heldKeys = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> _heldMouse = new(StringComparer.OrdinalIgnoreCase);
+
+    public MappingEngine(IKeyboardSink? keyboard = null, IMouseSink? mouse = null)
+    {
+        _keyboard = keyboard ?? Win32KeyboardSink.Instance;
+        _mouse = mouse ?? Win32MouseSink.Instance;
+    }
 
     public Xbox360InputState Map(InputFrame frame, ControllerProfile profile)
     {
@@ -46,12 +54,24 @@ public sealed class MappingEngine
         ApplyAnalogTrigger(profile.GetAction("Rt"), ScaleAnalog(frame.GetAnalog("Rt"), profile.TriggerDeadzone), ref outState, ref buttons, desiredKeys, desiredMouse);
 
         if (frame.TryGetVector("LeftStick", out var lsx, out var lsy))
-            ApplyStick(profile.GetAction("LeftStick"), ApplyDeadzone(lsx, profile.StickDeadzone), ApplyDeadzone(lsy, profile.StickDeadzone), ref outState);
+        {
+            var sx = ApplyDeadzone(lsx, profile.StickDeadzone);
+            var sy = ApplyDeadzone(lsy, profile.StickDeadzone);
+            sx = ApplySensitivityShort(sx, profile.StickSensitivityX, profile.InvertStickX);
+            sy = ApplySensitivityShort(sy, profile.StickSensitivityY, profile.InvertStickY);
+            ApplyStick(profile.GetAction("LeftStick"), sx, sy, ref outState);
+        }
         if (frame.TryGetVector("RightStick", out var rsx, out var rsy))
-            ApplyStick(profile.GetAction("RightStick"), ApplyDeadzone(rsx, profile.StickDeadzone), ApplyDeadzone(rsy, profile.StickDeadzone), ref outState);
+        {
+            var sx = ApplyDeadzone(rsx, profile.StickDeadzone);
+            var sy = ApplyDeadzone(rsy, profile.StickDeadzone);
+            sx = ApplySensitivityShort(sx, profile.StickSensitivityX, profile.InvertStickX);
+            sy = ApplySensitivityShort(sy, profile.StickSensitivityY, profile.InvertStickY);
+            ApplyStick(profile.GetAction("RightStick"), sx, sy, ref outState);
+        }
 
-        ApplyTrackpad(profile.LeftTrackpad, frame.GetDigital("LeftTrackpad"), frame, "LeftTrackpad", ref outState, ref buttons);
-        ApplyTrackpad(profile.RightTrackpad, frame.GetDigital("RightTrackpad"), frame, "RightTrackpad", ref outState, ref buttons);
+        ApplyTrackpad(profile.LeftTrackpad, frame.GetDigital("LeftTrackpad"), frame, "LeftTrackpad", ref outState, ref buttons, profile);
+        ApplyTrackpad(profile.RightTrackpad, frame.GetDigital("RightTrackpad"), frame, "RightTrackpad", ref outState, ref buttons, profile);
 
         if (profile.Gyro != GyroMode.Off && frame.TryGetVector("Gyro", out var gx, out var gy))
             ApplyGyro(profile, gx, gy, ref outState);
@@ -63,7 +83,7 @@ public sealed class MappingEngine
         return outState;
     }
 
-    void ApplyAction(
+    static void ApplyAction(
         OutputAction action,
         float strength,
         ref Xbox360InputState state,
@@ -92,7 +112,7 @@ public sealed class MappingEngine
         }
     }
 
-    void ApplyAnalogTrigger(
+    static void ApplyAnalogTrigger(
         OutputAction action,
         byte value,
         ref Xbox360InputState state,
@@ -140,7 +160,8 @@ public sealed class MappingEngine
         }
     }
 
-    void ApplyTrackpad(TrackpadMode mode, bool touching, InputFrame frame, string id, ref Xbox360InputState state, ref uint buttons)
+    void ApplyTrackpad(TrackpadMode mode, bool touching, InputFrame frame, string id,
+        ref Xbox360InputState state, ref uint buttons, ControllerProfile profile)
     {
         if (mode == TrackpadMode.Off) return;
         if (!touching)
@@ -150,8 +171,20 @@ public sealed class MappingEngine
         }
 
         if (!frame.TryGetVector(id, out var nx, out var ny)) return;
-        short x = (short)Math.Clamp((int)(nx * 32767), short.MinValue, short.MaxValue);
-        short y = (short)Math.Clamp((int)(ny * 32767), short.MinValue, short.MaxValue);
+
+        float sensX = profile.TrackpadSensitivityX;
+        float sensY = profile.TrackpadSensitivityY;
+        bool invX = profile.InvertTrackpadX;
+        bool invY = profile.InvertTrackpadY;
+        float dz = profile.TrackpadDeadzone;
+
+        float ax = Math.Abs(nx) < dz ? 0 : nx;
+        float ay = Math.Abs(ny) < dz ? 0 : ny;
+        ax *= sensX * (invX ? -1 : 1);
+        ay *= sensY * (invY ? -1 : 1);
+
+        short x = ClampToShort(ax * 32767f);
+        short y = ClampToShort(ay * 32767f);
 
         switch (mode)
         {
@@ -171,25 +204,48 @@ public sealed class MappingEngine
                 if (x > thresh) buttons |= (uint)Xbox360Buttons.DpadRight;
                 break;
             case TrackpadMode.AsMouse:
-                // Relative finger motion (Steam Desktop-style), not absolute position-as-velocity.
                 if (!_padMouseLast.TryGetValue(id, out var last))
                 {
                     _padMouseLast[id] = (nx, ny);
                     break;
                 }
-
                 _padMouseLast[id] = (nx, ny);
-                _mouseAccumX += (nx - last.X) * TrackpadMouseSensitivity;
-                _mouseAccumY += -(ny - last.Y) * TrackpadMouseSensitivity;
+                _mouseAccumX += (nx - last.X) * TrackpadMouseSensitivity * sensX * (invX ? -1 : 1);
+                _mouseAccumY += -(ny - last.Y) * TrackpadMouseSensitivity * sensY * (invY ? -1 : 1);
+                break;
+            case TrackpadMode.FlickStick:
+                if (Math.Abs(ax) > 0.5f || Math.Abs(ay) > 0.5f)
+                {
+                    float angle = MathF.Atan2(ax, ay);
+                    state.ThumbRX = ClampToShort(MathF.Sin(angle) * 32767f);
+                    state.ThumbRY = ClampToShort(MathF.Cos(angle) * 32767f);
+                }
+                break;
+            case TrackpadMode.ScrollWheel:
+                if (!_padMouseLast.TryGetValue(id, out var scrollLast))
+                {
+                    _padMouseLast[id] = (nx, ny);
+                    break;
+                }
+                _padMouseLast[id] = (nx, ny);
+                _mouseAccumY += -(ny - scrollLast.Y) * 120f * sensY * (invY ? -1 : 1);
+                break;
+            case TrackpadMode.ButtonPad:
+                const short bpThresh = 10000;
+                if (y > bpThresh) buttons |= (uint)Xbox360Buttons.A;
+                if (y < -bpThresh) buttons |= (uint)Xbox360Buttons.Y;
+                if (x < -bpThresh) buttons |= (uint)Xbox360Buttons.X;
+                if (x > bpThresh) buttons |= (uint)Xbox360Buttons.B;
                 break;
         }
     }
 
     void ApplyGyro(ControllerProfile profile, float ngx, float ngy, ref Xbox360InputState state)
     {
-        float s = profile.GyroSensitivity;
-        short gx = ClampToShort(ngy * 32767f * s);
-        short gy = ClampToShort(-ngx * 32767f * s);
+        float sx = profile.GyroSensitivityX * profile.GyroSensitivity;
+        float sy = profile.GyroSensitivityY * profile.GyroSensitivity;
+        short gx = ClampToShort(ngy * 32767f * sx * (profile.InvertGyroX ? -1 : 1));
+        short gy = ClampToShort(-ngx * 32767f * sy * (profile.InvertGyroY ? -1 : 1));
         if (profile.Gyro == GyroMode.AsRightStick)
         {
             state.ThumbRX = (short)Math.Clamp(state.ThumbRX + gx, short.MinValue, short.MaxValue);
@@ -220,7 +276,7 @@ public sealed class MappingEngine
         foreach (var btn in _heldMouse.ToList())
         {
             if (Enum.TryParse<MouseButtonOutput>(btn, true, out var b))
-                MouseInjector.SetButton(b, false);
+                _mouse.SetButton(b, false);
         }
         _heldMouse.Clear();
     }
@@ -236,8 +292,8 @@ public sealed class MappingEngine
         {
             if (_heldKeys.Contains(token)) continue;
             if (!TryParseKeyToken(token, out var mods, out var vk)) continue;
-            KeyboardInjector.SetModifier(mods, true);
-            KeyboardInjector.SetKey(vk, true);
+            _keyboard.SetModifier(mods, true);
+            _keyboard.SetKey(vk, true);
             _heldKeys.Add(token);
         }
     }
@@ -247,14 +303,14 @@ public sealed class MappingEngine
         foreach (var btn in _heldMouse.Where(b => !desired.Contains(b)).ToList())
         {
             if (Enum.TryParse<MouseButtonOutput>(btn, true, out var b))
-                MouseInjector.SetButton(b, false);
+                _mouse.SetButton(b, false);
             _heldMouse.Remove(btn);
         }
         foreach (var btn in desired)
         {
             if (_heldMouse.Contains(btn)) continue;
             if (!Enum.TryParse<MouseButtonOutput>(btn, true, out var b)) continue;
-            MouseInjector.SetButton(b, true);
+            _mouse.SetButton(b, true);
             _heldMouse.Add(btn);
         }
     }
@@ -273,11 +329,17 @@ public sealed class MappingEngine
         return true;
     }
 
-    static void ReleaseKeyToken(string token)
+    void ReleaseKeyToken(string token)
     {
         if (!TryParseKeyToken(token, out var mods, out var vk)) return;
-        KeyboardInjector.SetKey(vk, false);
-        KeyboardInjector.SetModifier(mods, false);
+        _keyboard.SetKey(vk, false);
+        _keyboard.SetModifier(mods, false);
+    }
+
+    static short ApplySensitivityShort(short value, float sensitivity, bool invert)
+    {
+        float v = value * sensitivity * (invert ? -1 : 1);
+        return ClampToShort(v);
     }
 
     static short ClampToShort(float v) => (short)Math.Clamp((int)v, short.MinValue, short.MaxValue);

@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace SteamControllerBridge.Host.Services;
+namespace MistMapper.Host.Services;
 
 /// <summary>
 /// Detects when the Xbox Game Bar overlay is actually visible so the bridge
@@ -9,7 +9,7 @@ namespace SteamControllerBridge.Host.Services;
 /// Process presence alone is NOT enough — GameBar.exe / GameBarFTServer
 /// often stay resident after the overlay is dismissed.
 /// </summary>
-public sealed class GameBarWatcher : IDisposable
+public sealed class GameBarWatcher : IDisposable, IGameBarState
 {
     static readonly string[] ProcessNames =
     [
@@ -73,7 +73,7 @@ public sealed class GameBarWatcher : IDisposable
         bool found = false;
         EnumWindows((hwnd, _) =>
         {
-            GetWindowThreadProcessId(hwnd, out var windowPid);
+            if (GetWindowThreadProcessId(hwnd, out var windowPid) == 0) return true;
             if (windowPid != pid) return true;
             if (!IsWindowVisible(hwnd) || IsIconic(hwnd)) return true;
             if (IsCloaked(hwnd)) return true;

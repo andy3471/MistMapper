@@ -1,9 +1,10 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 
-namespace SteamControllerBridge.Host.Viiper;
+namespace MistMapper.Host.Viiper;
 
 public sealed class Xbox360InputState
 {
@@ -52,7 +53,7 @@ public enum Xbox360Buttons : uint
 /// <summary>
 /// VIIPER TCP client. Management API = one TCP connection per command; response ends on socket close.
 /// </summary>
-public sealed class ViiperXbox360Client : IDisposable
+public sealed class ViiperXbox360Client : IViiperClient
 {
     readonly string _host;
     readonly int _apiPort;
@@ -94,7 +95,7 @@ public sealed class ViiperXbox360Client : IDisposable
             {
                 if (doc.RootElement.TryGetProperty("devId", out var idEl))
                     _devId = idEl.ValueKind == JsonValueKind.Number
-                        ? idEl.GetInt32().ToString()
+                        ? idEl.GetInt32().ToString(CultureInfo.InvariantCulture)
                         : idEl.GetString();
                 else
                     throw new InvalidOperationException($"Unexpected add response: {addResp}");
@@ -111,6 +112,11 @@ public sealed class ViiperXbox360Client : IDisposable
             await _deviceStream.FlushAsync(ct).ConfigureAwait(false);
 
             TryUsbipAttach($"{_busId}-{_devId}");
+            if (!string.IsNullOrEmpty(LastError) &&
+                LastError.StartsWith("usbip", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(LastError);
+            }
 
             // Rumble CTS must outlive the connect timeout token — linking them caused
             // IsConnected to flip false as soon as ConnectAsync returned, so the bridge
@@ -236,14 +242,20 @@ public sealed class ViiperXbox360Client : IDisposable
                 if (File.Exists(candidate)) { usbip = candidate; break; }
             }
         }
-        if (!File.Exists(usbip)) return;
+        if (!File.Exists(usbip))
+        {
+            LastError = "usbip.exe not found — install usbip-win2 so the virtual pad appears in Windows.";
+            return;
+        }
 
+        // VIIPER's USB-IP server listens on :3241 (API is :3242). usbip defaults to :3240.
+        const int viiperUsbPort = 3241;
         try
         {
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = usbip,
-                Arguments = $"attach -r 127.0.0.1 -b {busDev}",
+                Arguments = $"-t {viiperUsbPort} attach -r 127.0.0.1 -b {busDev}",
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardError = true,
@@ -251,14 +263,24 @@ public sealed class ViiperXbox360Client : IDisposable
             };
             using var p = System.Diagnostics.Process.Start(psi);
             if (p is null) return;
+            var stderr = p.StandardError.ReadToEnd();
+            var stdout = p.StandardOutput.ReadToEnd();
             if (!p.WaitForExit(5000))
             {
                 try { p.Kill(entireProcessTree: true); } catch { /* ignore */ }
+                LastError = "usbip attach timed out";
+                return;
+            }
+
+            if (p.ExitCode != 0)
+            {
+                var detail = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+                LastError = $"usbip attach failed (exit {p.ExitCode}): {detail.Trim()}";
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // VHCI may be broken; feeder stream still works for diagnostics.
+            LastError = "usbip attach error: " + ex.Message;
         }
     }
 

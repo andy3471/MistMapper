@@ -1,4 +1,4 @@
-namespace SteamControllerBridge.Shared;
+namespace MistMapper.Shared;
 
 /// <summary>Steam Input–style official templates users can instantiate as profiles.</summary>
 public static class OfficialLayouts

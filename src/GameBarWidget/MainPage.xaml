@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Page
-    x:Class="SteamControllerBridge.GameBarWidget.MainPage"
+    x:Class="MistMapper.GameBarWidget.MainPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Padding="24">
         <StackPanel VerticalAlignment="Center">
-            <TextBlock Text="SC Bridge" FontSize="28" FontWeight="SemiBold" Margin="0,0,0,8"/>
+            <TextBlock Text="MistMapper" FontSize="28" FontWeight="SemiBold" Margin="0,0,0,8"/>
             <TextBlock Text="Open this widget from Xbox Game Bar (Win+G)." TextWrapping="Wrap" Margin="0,0,0,8"/>
-            <TextBlock Text="Keep SteamControllerBridge.exe running in the tray." TextWrapping="Wrap" Opacity="0.8"/>
+            <TextBlock Text="Keep MistMapper.exe running in the tray." TextWrapping="Wrap" Opacity="0.8"/>
         </StackPanel>
     </Grid>
 </Page>
