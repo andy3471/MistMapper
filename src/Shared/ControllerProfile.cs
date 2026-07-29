@@ -192,4 +192,6 @@ public sealed class ControllerSlot
     /// <summary>"sc1" / "sc2" remembered for UI when disconnected.</summary>
     public string? LastModel { get; set; }
     public bool Enabled { get; set; } = true;
+    /// <summary>When false, game rumble is not forwarded to this pad (Identify still works).</summary>
+    public bool RumbleEnabled { get; set; } = true;
 }

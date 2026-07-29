@@ -197,6 +197,56 @@ public sealed class MultiControllerTests : IDisposable
         bridge.SelectedPadHasProfileOverride().Should().BeTrue();
     }
 
+    [Fact]
+    public async Task DualSense_and_SC_fakes_coexist_and_rumble_forwards()
+    {
+        var steam = new TestSteamState();
+        var session = new TestSessionState();
+        var foreground = new TestForegroundState();
+        var health = new FakeViiperHealth();
+        var sc = new FakeControllerDriver
+        {
+            Id = DriverIds.SteamController,
+            DeviceKey = "sc-pad",
+            DisplayName = "SC",
+            ControllerModel = "sc2"
+        };
+        var ds = new FakeControllerDriver
+        {
+            Id = DriverIds.DualSense,
+            DeviceKey = "ds-pad",
+            DisplayName = "DualSense",
+            ControllerModel = "dualsense",
+            Capabilities = DualSenseCapabilities.Create()
+        };
+        sc.Enqueue(new InputFrame());
+        ds.Enqueue(new InputFrame());
+
+        using var bridge = new BridgeService(
+            _profiles,
+            steam,
+            session,
+            foreground,
+            drivers: new DriverRegistry([sc, ds]),
+            viiperHealth: health,
+            viiperFactory: () => new FakeViiperClient());
+
+        bridge.Start();
+
+        var ready = await WaitUntilAsync(
+            () => bridge.Status.Controllers.Count >= 2,
+            TimeSpan.FromSeconds(5));
+        ready.Should().BeTrue();
+
+        bridge.SetSelectedController("ds-pad");
+        await Task.Delay(200);
+        bridge.Status.ActiveDriverId.Should().Be(DriverIds.DualSense);
+        bridge.Status.ControllerModel.Should().Be("dualsense");
+
+        await bridge.IdentifyControllerAsync("ds-pad");
+        ds.RumbleHistory.Should().NotBeEmpty();
+    }
+
     static async Task<bool> WaitUntilAsync(Func<bool> predicate, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;

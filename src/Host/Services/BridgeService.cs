@@ -16,6 +16,7 @@ public sealed class BridgeService : IDisposable
         public string DeviceKey { get; set; } = "";
         public int Order { get; set; }
         public bool Enabled { get; set; } = true;
+        public bool RumbleEnabled { get; set; } = true;
         public string Model { get; set; } = "";
         public string DisplayName { get; set; } = "";
         public string? OverrideProfileId { get; set; }
@@ -58,7 +59,15 @@ public sealed class BridgeService : IDisposable
             var driver = Driver;
             RumbleHandler = (left, right) =>
             {
-                try { driver.SetRumble(left, right); }
+                try
+                {
+                    if (!RumbleEnabled)
+                    {
+                        driver.SetRumble(0, 0);
+                        return;
+                    }
+                    driver.SetRumble(left, right);
+                }
                 catch { /* ignore */ }
             };
             Viiper.RumbleReceived += RumbleHandler;
@@ -160,6 +169,21 @@ public sealed class BridgeService : IDisposable
 
     public DriverRegistry Drivers => _drivers;
 
+    /// <summary>Capabilities for the selected (or primary) connected pad, model-aware.</summary>
+    public DriverCapabilities GetActiveCapabilities()
+    {
+        lock (_gate)
+        {
+            var selected = FindSlotUnlocked(_selectedDeviceKey)
+                ?? _slots.Where(s => s.Driver.IsConnected).OrderBy(s => s.Order).FirstOrDefault();
+            if (selected?.Driver is not null)
+                return selected.Driver.Capabilities;
+        }
+
+        var status = Status;
+        return _drivers.GetCapabilities(status.ActiveDriverId, status.ControllerModel);
+    }
+
     public void SetGameBarWidgetOpen(bool open)
     {
         bool changed;
@@ -218,15 +242,19 @@ public sealed class BridgeService : IDisposable
         if (slot is null || !slot.Driver.IsConnected)
             throw new InvalidOperationException("Controller is not connected.");
 
-        if (slot.Driver is SteamControllerDriver steam)
+        // Pause VIIPER rumble forwarding so a zeroed game rumble doesn't cancel the pulse.
+        slot.UnhookRumble();
+        try
         {
-            var ok = await steam.IdentifyAsync(ct);
+            var ok = await slot.Driver.IdentifyAsync(ct);
             if (!ok)
                 throw new InvalidOperationException("Rumble failed — this interface may not support haptics.");
-            return;
         }
-
-        throw new InvalidOperationException("Identify is only supported for Steam Controllers.");
+        finally
+        {
+            if (slot.Viiper?.IsConnected == true)
+                slot.HookRumble();
+        }
     }
 
     public void RenameController(string deviceKey, string? displayName)
@@ -241,8 +269,29 @@ public sealed class BridgeService : IDisposable
             if (slot is not null)
             {
                 slot.DisplayName = string.IsNullOrWhiteSpace(displayName)
-                    ? SteamControllerDevice.DisplayNameForModel(slot.Model)
+                    ? DisplayNameForModel(slot.Model)
                     : displayName.Trim();
+            }
+        }
+        PublishStatus();
+    }
+
+    public void SetControllerRumbleEnabled(string deviceKey, bool rumbleEnabled)
+    {
+        if (string.IsNullOrWhiteSpace(deviceKey))
+            throw new ArgumentException("deviceKey required");
+
+        _profiles.SetControllerRumbleEnabled(deviceKey, rumbleEnabled);
+        lock (_gate)
+        {
+            var slot = FindSlotUnlocked(deviceKey);
+            if (slot is not null)
+            {
+                slot.RumbleEnabled = rumbleEnabled;
+                if (!rumbleEnabled)
+                {
+                    try { slot.Driver.SetRumble(0, 0); } catch { /* ignore */ }
+                }
             }
         }
         PublishStatus();
@@ -262,7 +311,7 @@ public sealed class BridgeService : IDisposable
 
         var slotMeta = _profiles.FindControllerSlot(deviceKey);
         var label = slotMeta?.DisplayName
-                    ?? SteamControllerDevice.DisplayNameForModel(slotMeta?.LastModel ?? "sc2");
+                    ?? DisplayNameForModel(slotMeta?.LastModel ?? "sc2");
         var created = _profiles.SaveAsProfile(sourceId!, label + " layout");
         _profiles.SetControllerSlotProfile(deviceKey, created.Id);
         RefreshSlotOverridesFromStore();
@@ -422,6 +471,7 @@ public sealed class BridgeService : IDisposable
                 if (stored is null) continue;
                 slot.Order = stored.Order;
                 slot.Enabled = stored.Enabled;
+                slot.RumbleEnabled = stored.RumbleEnabled;
                 slot.OverrideProfileId = stored.ProfileId;
                 if (!string.IsNullOrWhiteSpace(stored.DisplayName))
                     slot.DisplayName = stored.DisplayName!;
@@ -521,7 +571,14 @@ public sealed class BridgeService : IDisposable
                     slot.ProfileSource = source;
 
                     var gameBarOpen = IsGameBarOverrideActive();
-                    var mapProfile = gameBarOpen ? _gameBarGamepadProfile : profile;
+                    var mapProfile = profile;
+                    if (gameBarOpen)
+                    {
+                        // Stock Xbox buttons for overlay navigation, but keep the
+                        // user's gyro / pad modes so aim still works while Win+G is open.
+                        ApplyGameBarOverrideSurfaces(profile, _gameBarGamepadProfile);
+                        mapProfile = _gameBarGamepadProfile;
+                    }
                     var allowKbMouse = string.Equals(slot.DeviceKey, primaryKey, StringComparison.OrdinalIgnoreCase);
                     var xbox = slot.Mapper.Map(frame, mapProfile, allowKbMouse);
                     slot.Viiper!.SendInput(xbox);
@@ -580,6 +637,12 @@ public sealed class BridgeService : IDisposable
     {
         lock (_gate)
         {
+            // Prefer the pad selected in the widget so DualSense (or any secondary
+            // pad) can drive AsMouse gyro / trackpad without being Order 0.
+            var selected = FindSlotUnlocked(_selectedDeviceKey);
+            if (selected is not null && selected.Enabled && selected.Driver.IsConnected)
+                return selected.DeviceKey;
+
             return _slots
                 .Where(s => s.Enabled && s.Driver.IsConnected)
                 .OrderBy(s => s.Order)
@@ -636,12 +699,14 @@ public sealed class BridgeService : IDisposable
             var stored = _profiles.EnsureControllerSlot(
                 key,
                 driver.DisplayName,
-                driver.ControllerModel);
+                driver.ControllerModel,
+                driver.Id);
             var slot = new BridgeSlot
             {
                 DeviceKey = key,
                 Order = stored.Order,
                 Enabled = stored.Enabled,
+                RumbleEnabled = stored.RumbleEnabled,
                 Model = driver.ControllerModel,
                 DisplayName = stored.DisplayName ?? driver.DisplayName,
                 OverrideProfileId = stored.ProfileId,
@@ -676,21 +741,23 @@ public sealed class BridgeService : IDisposable
             claimed = _slots.Select(s => s.DeviceKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var available = DriverRegistry.EnumeratePhysicalPads(claimed);
-        foreach (var (deviceKey, devicePath, model) in available)
+        foreach (var (deviceKey, devicePath, model, driverId) in available)
         {
             if (claimed.Contains(deviceKey)) continue;
-            var driver = DriverRegistry.OpenSteamController(devicePath);
+            var driver = DriverRegistry.OpenPad(driverId, devicePath);
             if (driver is null) continue;
 
             var stored = _profiles.EnsureControllerSlot(
                 deviceKey,
                 driver.DisplayName,
-                model);
+                model,
+                driverId);
             var slot = new BridgeSlot
             {
                 DeviceKey = deviceKey,
                 Order = stored.Order,
                 Enabled = stored.Enabled,
+                RumbleEnabled = stored.RumbleEnabled,
                 Model = model,
                 DisplayName = stored.DisplayName ?? driver.DisplayName,
                 OverrideProfileId = stored.ProfileId,
@@ -706,10 +773,11 @@ public sealed class BridgeService : IDisposable
             await EnsureViiperForSlotAsync(slot, ct);
         }
 
-        var connectedKeys = new HashSet<string>(
-            SteamControllerDevice.EnumerateInstances()
-                .Select(d => SteamControllerDevice.PhysicalDeviceKey(d.DevicePath!)),
-            StringComparer.OrdinalIgnoreCase);
+        var connectedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var d in SteamControllerDevice.EnumerateInstances())
+            connectedKeys.Add(SteamControllerDevice.PhysicalDeviceKey(d.DevicePath!));
+        foreach (var d in DualSense.DualSenseDevice.EnumerateInstances())
+            connectedKeys.Add(DualSense.DualSenseDevice.PhysicalDeviceKey(d.DevicePath!));
         // Keep slots whose drivers are still open even if enumerate briefly misses them.
         lock (_gate)
         {
@@ -753,7 +821,14 @@ public sealed class BridgeService : IDisposable
             _viiperDep.Ok = true;
             _viiperDep.Detail = "Connected";
             _notifiedViiperDown = false;
-            slot.Driver.PrepareExclusive();
+            if (!slot.Driver.PrepareExclusive()
+                && string.Equals(slot.Driver.Id, DriverIds.DualSense, StringComparison.OrdinalIgnoreCase))
+            {
+                _lastError =
+                    "DualSense native pad still visible to games (double input). " +
+                    "Restart MistMapper as Administrator to hide it.";
+                PublishStatus(BridgeRunState.Bridging, _lastError);
+            }
             return true;
         }
         catch (Exception ex)
@@ -806,6 +881,29 @@ public sealed class BridgeService : IDisposable
         // Heartbeat / widget process can stay "alive" after Win+G is dismissed and would
         // otherwise stick the bridge in stock Xbox mode.
         return _gameBar.IsGameBarOpen;
+    }
+
+    static void ApplyGameBarOverrideSurfaces(ControllerProfile source, ControllerProfile overlay)
+    {
+        overlay.Gyro = source.Gyro;
+        overlay.GyroSensitivity = source.GyroSensitivity;
+        overlay.GyroSensitivityX = source.GyroSensitivityX;
+        overlay.GyroSensitivityY = source.GyroSensitivityY;
+        overlay.GyroDotsPer360 = source.GyroDotsPer360;
+        overlay.InvertGyroX = source.InvertGyroX;
+        overlay.InvertGyroY = source.InvertGyroY;
+        overlay.GyroButtons = source.GyroButtons.ToList();
+        overlay.GyroButtonMode = source.GyroButtonMode;
+        overlay.GyroButtonCombine = source.GyroButtonCombine;
+        overlay.LeftTrackpad = source.LeftTrackpad;
+        overlay.RightTrackpad = source.RightTrackpad;
+        overlay.LeftTrackpadSettings = source.LeftTrackpadSettings;
+        overlay.RightTrackpadSettings = source.RightTrackpadSettings;
+        overlay.TrackpadSensitivityX = source.TrackpadSensitivityX;
+        overlay.TrackpadSensitivityY = source.TrackpadSensitivityY;
+        overlay.TrackpadDeadzone = source.TrackpadDeadzone;
+        overlay.InvertTrackpadX = source.InvertTrackpadX;
+        overlay.InvertTrackpadY = source.InvertTrackpadY;
     }
 
     void EnterLizardForLock()
@@ -879,9 +977,6 @@ public sealed class BridgeService : IDisposable
             var connected = _slots.Where(s => s.Driver.IsConnected).OrderBy(s => s.Order).ToList();
             var primary = connected.FirstOrDefault() ?? PrimarySlotUnlocked();
             _status.ControllerConnected = connected.Count > 0;
-            _status.ControllerModel = primary?.Model
-                ?? (primary?.Driver as SteamControllerDriver)?.ControllerModel
-                ?? "";
             _status.SteamRunning = _steam.IsSteamRunning;
             _status.SessionLocked = _session.IsLocked;
             _status.ViiperConnected = _slots.Any(s => s.Viiper?.IsConnected == true);
@@ -896,10 +991,15 @@ public sealed class BridgeService : IDisposable
             _status.ActiveProfileId = selectedResolved.Id;
             _status.ActiveProfileName = selectedResolved.Name;
             _status.ActiveProfileSource = selectedSource.ToString();
-            _status.ActiveDriverId = primary?.Driver.Id ?? DriverIds.SteamController;
-            _status.ActiveDriverName = primary?.DisplayName
+            _status.ActiveDriverId = selected?.Driver.Id ?? primary?.Driver.Id ?? DriverIds.SteamController;
+            _status.ActiveDriverName = selected?.DisplayName
+                ?? selected?.Driver.DisplayName
+                ?? primary?.DisplayName
                 ?? primary?.Driver.DisplayName
                 ?? "Steam Controller";
+            _status.ControllerModel = selected?.Model
+                ?? primary?.Model
+                ?? "";
             _status.CurrentGameExe = _foreground.ExeName;
             _status.CurrentGamePath = _foreground.Path;
             _status.CurrentGameName = string.IsNullOrWhiteSpace(_foreground.DisplayName)
@@ -917,10 +1017,11 @@ public sealed class BridgeService : IDisposable
                     DeviceKey = s.DeviceKey,
                     Model = s.Model,
                     DisplayName = string.IsNullOrWhiteSpace(s.DisplayName)
-                        ? SteamControllerDevice.DisplayNameForModel(s.Model)
+                        ? DisplayNameForModel(s.Model)
                         : s.DisplayName,
                     Order = s.Order,
                     Enabled = s.Enabled,
+                    RumbleEnabled = s.RumbleEnabled,
                     Connected = true,
                     ProfileId = prof.Id,
                     ProfileName = prof.Name,
@@ -976,6 +1077,7 @@ public sealed class BridgeService : IDisposable
             Order = c.Order,
             Enabled = c.Enabled,
             Connected = c.Connected,
+            RumbleEnabled = c.RumbleEnabled,
             ProfileId = c.ProfileId,
             ProfileName = c.ProfileName,
             HasProfileOverride = c.HasProfileOverride,
@@ -990,6 +1092,14 @@ public sealed class BridgeService : IDisposable
         }).ToList(),
         Message = s.Message,
         UpdatedAt = s.UpdatedAt
+    };
+
+    static string DisplayNameForModel(string? model) => model switch
+    {
+        "sc1" => SteamControllerDevice.DisplayNameForModel("sc1"),
+        "sc2" => SteamControllerDevice.DisplayNameForModel("sc2"),
+        "dualsense" or "dualsense-edge" => DualSense.DualSenseDevice.DisplayNameForModel(model!),
+        _ => SteamControllerDevice.DisplayNameForModel(model ?? "")
     };
 
     public void Dispose()

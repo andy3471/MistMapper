@@ -43,4 +43,5 @@ public sealed class DriverCapabilities
 public static class DriverIds
 {
     public const string SteamController = "steam-controller";
+    public const string DualSense = "dualsense";
 }

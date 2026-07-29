@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Security.Principal;
 using MistMapper.Host.Services;
 using MistMapper.Host.UI;
 
@@ -13,6 +15,7 @@ public sealed class TrayAppContext : ApplicationContext
     readonly SteamWatcher _steam;
     readonly SessionWatcher _session;
     RemapperForm? _remapper;
+    bool _promptedElevation;
 
     public TrayAppContext(bool openRemapperOnStart = false)
     {
@@ -91,6 +94,11 @@ public sealed class TrayAppContext : ApplicationContext
         startup.CheckedChanged += (_, _) => StartupRegistration.SetEnabled(startup.Checked);
         menu.Items.Add(startup);
         menu.Items.Add(new ToolStripSeparator());
+        if (!IsElevated())
+        {
+            menu.Items.Add("Restart as Administrator…", null, (_, _) => RestartElevated());
+            menu.Items.Add(new ToolStripSeparator());
+        }
         menu.Items.Add("Exit", null, (_, _) => Exit());
         return menu;
     }
@@ -115,8 +123,57 @@ public sealed class TrayAppContext : ApplicationContext
                 _tray.BalloonTipIcon = ToolTipIcon.Error;
                 _tray.ShowBalloonTip(5000);
             }
+
+            // DualSense native pad hide needs admin — offer a one-shot elevate prompt.
+            if (!_promptedElevation
+                && !IsElevated()
+                && status.Message.Contains("Restart MistMapper as Administrator", StringComparison.OrdinalIgnoreCase))
+            {
+                _promptedElevation = true;
+                var answer = MessageBox.Show(
+                    "Your DualSense is still visible to games as a second controller, which causes double input.\n\n" +
+                    "MistMapper needs Administrator rights to hide the native pad.\n\n" +
+                    "Restart elevated now?",
+                    "MistMapper",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning);
+                if (answer == DialogResult.Yes)
+                    RestartElevated();
+            }
         }
         catch { /* ignore */ }
+    }
+
+    static bool IsElevated()
+    {
+        using var id = WindowsIdentity.GetCurrent();
+        return new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
+    }
+
+    void RestartElevated()
+    {
+        try
+        {
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(exe))
+                exe = Application.ExecutablePath;
+            var psi = new ProcessStartInfo(exe)
+            {
+                UseShellExecute = true,
+                Verb = "runas",
+                Arguments = "--tray"
+            };
+            Process.Start(psi);
+            Exit();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                "Could not restart elevated:\n" + ex.Message,
+                "MistMapper",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
     }
 
     static string Truncate(string s, int max) =>

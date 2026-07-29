@@ -495,5 +495,50 @@
                         HorizontalAlignment="Stretch" Padding="16,14"/>
             </Grid>
         </Grid>
+
+        <!-- ════════ TEXT PROMPT (Save As / Rename) ════════ -->
+        <Grid x:Name="TextPromptView" Visibility="Collapsed" Background="Transparent">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid Grid.Row="0" Margin="16,14,16,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Content="&#xE72B;" Click="TextPromptCancel_Click"
+                        Style="{StaticResource PillIconButtonStyle}"
+                        Margin="0,0,12,0" VerticalAlignment="Top"
+                        ToolTipService.ToolTip="Back"/>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock x:Name="TextPromptTitle" Text="Name" FontSize="20" FontWeight="SemiBold"
+                               Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"/>
+                    <TextBlock Text="Enter to save · B to cancel"
+                               FontSize="13" Margin="0,2,0,0"
+                               Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"/>
+                </StackPanel>
+            </Grid>
+            <StackPanel Grid.Row="1" Margin="16,8,16,12">
+                <TextBlock x:Name="TextPromptHeader" Text="" FontSize="13" Margin="0,0,0,8"
+                           Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"/>
+                <TextBox x:Name="TextPromptBox" FontSize="16" Padding="14,12"
+                         KeyDown="TextPromptBox_KeyDown"/>
+            </StackPanel>
+            <Grid Grid.Row="2" Margin="16,0,16,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="12"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Content="B Cancel" Click="TextPromptCancel_Click"
+                        Style="{StaticResource PillButtonStyle}"
+                        HorizontalAlignment="Stretch" Padding="16,14"/>
+                <Button Grid.Column="2" Content="Save" Click="TextPromptSave_Click"
+                        Style="{StaticResource PillAccentButtonStyle}"
+                        HorizontalAlignment="Stretch" Padding="16,14"/>
+            </Grid>
+        </Grid>
     </Grid>
 </Page>

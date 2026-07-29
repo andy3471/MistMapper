@@ -108,7 +108,7 @@ public sealed class IpcServer : IDisposable
 
             case IpcCommands.GetDriverCapabilities:
                 response.Payload = JsonSerializer.SerializeToElement(
-                    _bridge.Drivers.GetCapabilities(), IpcProtocol.JsonOptions);
+                    _bridge.GetActiveCapabilities(), IpcProtocol.JsonOptions);
                 break;
 
             case IpcCommands.SetActiveProfile:
@@ -250,6 +250,14 @@ public sealed class IpcServer : IDisposable
             {
                 var p = Deserialize<RenameControllerPayload>(request.Payload);
                 _bridge.RenameController(p.DeviceKey, p.DisplayName);
+                response.Payload = JsonSerializer.SerializeToElement(_bridge.Status, IpcProtocol.JsonOptions);
+                break;
+            }
+
+            case IpcCommands.SetControllerRumble:
+            {
+                var p = Deserialize<SetControllerRumblePayload>(request.Payload);
+                _bridge.SetControllerRumbleEnabled(p.DeviceKey, p.RumbleEnabled);
                 response.Payload = JsonSerializer.SerializeToElement(_bridge.Status, IpcProtocol.JsonOptions);
                 break;
             }

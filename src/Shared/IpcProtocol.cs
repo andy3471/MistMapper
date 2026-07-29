@@ -52,6 +52,7 @@ public static class IpcCommands
     public const string GetControllerSlots = "getControllerSlots";
     public const string SetControllerSlotOrder = "setControllerSlotOrder";
     public const string SetControllerSlotProfile = "setControllerSlotProfile";
+    public const string SetControllerRumble = "setControllerRumble";
     public const string SetSelectedController = "setSelectedController";
     public const string MakeControllerProfileUnique = "makeControllerProfileUnique";
     public const string IdentifyController = "identifyController";
@@ -178,4 +179,10 @@ public sealed class RenameControllerPayload
 {
     public string DeviceKey { get; set; } = "";
     public string? DisplayName { get; set; }
+}
+
+public sealed class SetControllerRumblePayload
+{
+    public string DeviceKey { get; set; } = "";
+    public bool RumbleEnabled { get; set; } = true;
 }

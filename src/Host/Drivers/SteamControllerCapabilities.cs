@@ -4,12 +4,14 @@ namespace MistMapper.Host.Drivers;
 
 public static class SteamControllerCapabilities
 {
-    public static DriverCapabilities Create()
+    public static DriverCapabilities Create(string? model = null)
     {
+        bool sc1 = string.Equals(model, "sc1", StringComparison.OrdinalIgnoreCase);
+
         var caps = new DriverCapabilities
         {
             DriverId = DriverIds.SteamController,
-            DisplayName = "Steam Controller",
+            DisplayName = sc1 ? "Steam Controller" : "Steam Controller",
             SupportsTrackpadModes = true,
             SupportsGyroModes = true
         };
@@ -33,23 +35,30 @@ public static class SteamControllerCapabilities
         Add(PhysicalInput.Menu, DriverInputKind.Digital);
         Add(PhysicalInput.Steam, DriverInputKind.Digital, remappable: false, name: "Steam (Guide)");
         Add(PhysicalInput.LsClick, DriverInputKind.Digital, name: "LS Click");
-        Add(PhysicalInput.RsClick, DriverInputKind.Digital, name: "RS Click");
+        if (!sc1)
+            Add(PhysicalInput.RsClick, DriverInputKind.Digital, name: "RS Click");
         Add(PhysicalInput.DpadUp, DriverInputKind.Digital);
         Add(PhysicalInput.DpadDown, DriverInputKind.Digital);
         Add(PhysicalInput.DpadLeft, DriverInputKind.Digital);
         Add(PhysicalInput.DpadRight, DriverInputKind.Digital);
-        Add(PhysicalInput.L4, DriverInputKind.Digital, name: "L4 (Upper Left Grip)");
-        Add(PhysicalInput.L5, DriverInputKind.Digital, name: "L5 (Lower Left Grip)");
-        Add(PhysicalInput.R4, DriverInputKind.Digital, name: "R4 (Upper Right Grip)");
-        Add(PhysicalInput.R5, DriverInputKind.Digital, name: "R5 (Lower Right Grip)");
+        Add(PhysicalInput.L4, DriverInputKind.Digital, name: sc1 ? "Left Grip" : "L4 (Upper Left Grip)");
+        if (!sc1)
+            Add(PhysicalInput.L5, DriverInputKind.Digital, name: "L5 (Lower Left Grip)");
+        Add(PhysicalInput.R4, DriverInputKind.Digital, name: sc1 ? "Right Grip" : "R4 (Upper Right Grip)");
+        if (!sc1)
+            Add(PhysicalInput.R5, DriverInputKind.Digital, name: "R5 (Lower Right Grip)");
         Add(PhysicalInput.Lt, DriverInputKind.Analog, name: "LT");
         Add(PhysicalInput.Rt, DriverInputKind.Analog, name: "RT");
         Add(PhysicalInput.LeftStick, DriverInputKind.Stick);
-        Add(PhysicalInput.RightStick, DriverInputKind.Stick);
+        if (!sc1)
+            Add(PhysicalInput.RightStick, DriverInputKind.Stick);
         Add(PhysicalInput.LeftTrackpad, DriverInputKind.Trackpad, remappable: false);
         Add(PhysicalInput.RightTrackpad, DriverInputKind.Trackpad, remappable: false);
-        Add(PhysicalInput.LeftStickTouch, DriverInputKind.Digital, remappable: false, name: "LS Touch");
-        Add(PhysicalInput.RightStickTouch, DriverInputKind.Digital, remappable: false, name: "RS Touch");
+        if (!sc1)
+        {
+            Add(PhysicalInput.LeftStickTouch, DriverInputKind.Digital, remappable: false, name: "LS Touch");
+            Add(PhysicalInput.RightStickTouch, DriverInputKind.Digital, remappable: false, name: "RS Touch");
+        }
         Add(PhysicalInput.LeftTrackpadClick, DriverInputKind.Digital, name: "L Pad Click");
         Add(PhysicalInput.RightTrackpadClick, DriverInputKind.Digital, name: "R Pad Click");
         Add(PhysicalInput.Gyro, DriverInputKind.Gyro, remappable: false);
@@ -80,17 +89,20 @@ public static class SteamControllerCapabilities
         Spot("Menu", 0.54, 0.30, 0.06, 0.04, "rect", "Start");
         Spot("Steam", 0.47, 0.38, 0.06, 0.06, "ellipse", "Steam", remappable: false);
         Spot("LeftStick", 0.28, 0.42, 0.10, 0.12, "ellipse", "LS");
-        Spot("RightStick", 0.55, 0.55, 0.10, 0.12, "ellipse", "RS");
+        if (!sc1)
+            Spot("RightStick", 0.55, 0.55, 0.10, 0.12, "ellipse", "RS");
         Spot("LeftTrackpad", 0.18, 0.55, 0.16, 0.16, "ellipse", "L Pad");
         Spot("RightTrackpad", 0.66, 0.55, 0.16, 0.16, "ellipse", "R Pad");
         Spot("DpadUp", 0.38, 0.48, 0.05, 0.05, "rect", "↑");
         Spot("DpadDown", 0.38, 0.58, 0.05, 0.05, "rect", "↓");
         Spot("DpadLeft", 0.33, 0.53, 0.05, 0.05, "rect", "←");
         Spot("DpadRight", 0.43, 0.53, 0.05, 0.05, "rect", "→");
-        Spot("L4", 0.08, 0.35, 0.07, 0.10, "rect", "L4 Grip");
-        Spot("L5", 0.08, 0.48, 0.07, 0.10, "rect", "L5 Grip");
-        Spot("R4", 0.85, 0.35, 0.07, 0.10, "rect", "R4 Grip");
-        Spot("R5", 0.85, 0.48, 0.07, 0.10, "rect", "R5 Grip");
+        Spot("L4", 0.08, 0.35, 0.07, 0.10, "rect", sc1 ? "L Grip" : "L4 Grip");
+        if (!sc1)
+            Spot("L5", 0.08, 0.48, 0.07, 0.10, "rect", "L5 Grip");
+        Spot("R4", 0.85, 0.35, 0.07, 0.10, "rect", sc1 ? "R Grip" : "R4 Grip");
+        if (!sc1)
+            Spot("R5", 0.85, 0.48, 0.07, 0.10, "rect", "R5 Grip");
         Spot("Gyro", 0.47, 0.72, 0.10, 0.06, "rect", "Gyro");
 
         return caps;

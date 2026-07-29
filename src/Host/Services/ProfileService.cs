@@ -460,7 +460,7 @@ public sealed class ProfileService
     /// Upsert connected pad metadata; restores order/override from store when known.
     /// New pads append at the end of the order list.
     /// </summary>
-    public ControllerSlot EnsureControllerSlot(string deviceKey, string? displayName, string? model)
+    public ControllerSlot EnsureControllerSlot(string deviceKey, string? displayName, string? model, string? driverId = null)
     {
         if (string.IsNullOrWhiteSpace(deviceKey))
             throw new ArgumentException("deviceKey required");
@@ -470,6 +470,9 @@ public sealed class ProfileService
             var slot = _doc.ControllerSlots.FirstOrDefault(s =>
                 s.DeviceKey.Equals(deviceKey, StringComparison.OrdinalIgnoreCase));
             var dirty = false;
+            var resolvedDriverId = string.IsNullOrWhiteSpace(driverId)
+                ? DriverIds.SteamController
+                : driverId!;
             if (slot is null)
             {
                 var nextOrder = _doc.ControllerSlots.Count == 0
@@ -478,7 +481,7 @@ public sealed class ProfileService
                 slot = new ControllerSlot
                 {
                     DeviceKey = deviceKey,
-                    DriverId = DriverIds.SteamController,
+                    DriverId = resolvedDriverId,
                     Order = nextOrder,
                     Enabled = true
                 };
@@ -500,7 +503,13 @@ public sealed class ProfileService
             }
             if (string.IsNullOrEmpty(slot.DriverId))
             {
-                slot.DriverId = DriverIds.SteamController;
+                slot.DriverId = resolvedDriverId;
+                dirty = true;
+            }
+            else if (!string.IsNullOrWhiteSpace(driverId)
+                     && !string.Equals(slot.DriverId, driverId, StringComparison.OrdinalIgnoreCase))
+            {
+                slot.DriverId = driverId!;
                 dirty = true;
             }
 
@@ -545,7 +554,9 @@ public sealed class ProfileService
                     ProfileId = incoming.ProfileId ?? existing?.ProfileId,
                     DisplayName = incoming.DisplayName ?? existing?.DisplayName,
                     LastModel = incoming.LastModel ?? existing?.LastModel,
-                    Enabled = incoming.Enabled
+                    Enabled = incoming.Enabled,
+                    // Reorder payloads from the widget omit rumble — keep the stored value.
+                    RumbleEnabled = existing?.RumbleEnabled ?? incoming.RumbleEnabled
                 });
             }
 
@@ -626,6 +637,33 @@ public sealed class ProfileService
         Changed?.Invoke();
     }
 
+    public void SetControllerRumbleEnabled(string deviceKey, bool rumbleEnabled)
+    {
+        if (string.IsNullOrWhiteSpace(deviceKey))
+            throw new ArgumentException("deviceKey required");
+
+        lock (_lock)
+        {
+            var slot = _doc.ControllerSlots.FirstOrDefault(s =>
+                s.DeviceKey.Equals(deviceKey, StringComparison.OrdinalIgnoreCase));
+            if (slot is null)
+            {
+                slot = new ControllerSlot
+                {
+                    Order = _doc.ControllerSlots.Count,
+                    DeviceKey = deviceKey,
+                    DriverId = DriverIds.SteamController
+                };
+                _doc.ControllerSlots.Add(slot);
+            }
+            if (slot.RumbleEnabled == rumbleEnabled)
+                return;
+            slot.RumbleEnabled = rumbleEnabled;
+            SaveUnlocked();
+        }
+        Changed?.Invoke();
+    }
+
     /// <summary>Legacy API — prefers DeviceKey when provided via driverId field misuse; prefer SetControllerSlotProfile(deviceKey).</summary>
     public void SetControllerSlotProfileByDriver(string driverId, string? profileId)
     {
@@ -657,7 +695,8 @@ public sealed class ProfileService
         ProfileId = s.ProfileId,
         DisplayName = s.DisplayName,
         LastModel = s.LastModel,
-        Enabled = s.Enabled
+        Enabled = s.Enabled,
+        RumbleEnabled = s.RumbleEnabled
     };
 
     public void BindToGame(string profileId, string matchExe, string? matchPathContains = null, string? displayName = null)

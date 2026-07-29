@@ -28,6 +28,8 @@ public sealed class ControllerStatus
     public int Order { get; set; }
     public bool Enabled { get; set; } = true;
     public bool Connected { get; set; }
+    /// <summary>When false, game rumble is not forwarded (Identify still works).</summary>
+    public bool RumbleEnabled { get; set; } = true;
     public string? ProfileId { get; set; }
     public string? ProfileName { get; set; }
     /// <summary>True when ProfileId is a per-pad override (not shared default/game).</summary>

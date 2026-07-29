@@ -11,7 +11,7 @@ public sealed class SteamControllerDriver : IControllerDriver
 
     public string Id => DriverIds.SteamController;
     public string DisplayName { get; private set; } = "Steam Controller";
-    public DriverCapabilities Capabilities { get; } = SteamControllerCapabilities.Create();
+    public DriverCapabilities Capabilities { get; private set; } = SteamControllerCapabilities.Create();
     public bool IsConnected => _device?.IsOpen == true;
     public string DeviceKey => _deviceKey;
     public int ProductId => _device?.ProductId ?? 0;
@@ -63,6 +63,7 @@ public sealed class SteamControllerDriver : IControllerDriver
             : SteamControllerDevice.PhysicalDeviceKey(path);
         _model = device.Model;
         DisplayName = SteamControllerDevice.DisplayNameForModel(_model);
+        Capabilities = SteamControllerCapabilities.Create(_model);
     }
 
     public void Close()
@@ -72,6 +73,7 @@ public sealed class SteamControllerDriver : IControllerDriver
         _deviceKey = "";
         _model = "";
         DisplayName = "Steam Controller";
+        Capabilities = SteamControllerCapabilities.Create();
     }
 
     public bool PrepareExclusive() => _device?.DisableLizardMode() == true;
@@ -98,11 +100,11 @@ public sealed class SteamControllerDriver : IControllerDriver
             return false;
         }
 
-        frame = ToFrame(sc);
+        frame = ToFrame(sc, isSc1: string.Equals(_model, "sc1", StringComparison.OrdinalIgnoreCase));
         return true;
     }
 
-    public static InputFrame ToFrame(SteamControllerState sc)
+    public static InputFrame ToFrame(SteamControllerState sc, bool isSc1 = false)
     {
         var frame = new InputFrame { Timestamp = DateTimeOffset.UtcNow };
         void Dig(PhysicalInput id, bool pressed) => frame.Digitals[id.ToString()] = pressed;
@@ -131,7 +133,10 @@ public sealed class SteamControllerDriver : IControllerDriver
         Dig(PhysicalInput.LeftTrackpad, sc.LeftTrackpadTouch);
         Dig(PhysicalInput.RightTrackpad, sc.RightTrackpadTouch);
         Dig(PhysicalInput.LeftStickTouch, sc.LeftStickTouch);
-        Dig(PhysicalInput.RightStickTouch, sc.RightStickTouch);
+        // SC1 has no capacitive stick touch — mirror right-pad touch so layouts that
+        // activate gyro on RightStickTouch (Steam FPS default) still work.
+        Dig(PhysicalInput.RightStickTouch,
+            sc.RightStickTouch || (isSc1 && sc.RightTrackpadTouch));
 
         frame.Analogs[PhysicalInput.Lt.ToString()] = Math.Clamp(sc.LeftTrigger / 32767f, 0f, 1f);
         frame.Analogs[PhysicalInput.Rt.ToString()] = Math.Clamp(sc.RightTrigger / 32767f, 0f, 1f);
@@ -140,7 +145,14 @@ public sealed class SteamControllerDriver : IControllerDriver
         frame.Vectors[PhysicalInput.LeftTrackpad.ToString()] = (sc.LeftTrackpadX / 32767f, sc.LeftTrackpadY / 32767f);
         frame.Vectors[PhysicalInput.RightTrackpad.ToString()] = (sc.RightTrackpadX / 32767f, sc.RightTrackpadY / 32767f);
         if (sc.HasImu)
-            frame.Vectors[PhysicalInput.Gyro.ToString()] = (sc.GyroX / 32767f, sc.GyroY / 32767f);
+        {
+            // SC1 pitch is opposite the SC2 / MappingEngine convention (vertical look).
+            float gx = sc.GyroX / 32767f;
+            float gy = sc.GyroY / 32767f;
+            if (isSc1)
+                gx = -gx;
+            frame.Vectors[PhysicalInput.Gyro.ToString()] = (gx, gy);
+        }
 
         return frame;
     }

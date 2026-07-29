@@ -370,6 +370,17 @@ public sealed class GameBarFileIpcService : IDisposable
                 return null;
             }
 
+            case "setControllerRumble":
+            {
+                // deviceKey \t true|false
+                var bits = payload.Split('\t');
+                if (bits.Length < 2 || string.IsNullOrWhiteSpace(bits[0]))
+                    throw new ArgumentException("Invalid setControllerRumble payload");
+                var on = bits[1].Equals("true", StringComparison.OrdinalIgnoreCase) || bits[1] == "1";
+                _bridge.SetControllerRumbleEnabled(bits[0].Trim(), on);
+                return null;
+            }
+
             default:
                 throw new InvalidOperationException("Unknown command: " + command);
         }
@@ -407,7 +418,7 @@ public sealed class GameBarFileIpcService : IDisposable
         // Selected pad's resolved profile for the widget UI.
         var active = _bridge.GetSelectedResolvedProfile();
         var profiles = _profiles.GetUserProfiles();
-        var caps = _bridge.Drivers.GetCapabilities(status.ActiveDriverId);
+        var caps = _bridge.GetActiveCapabilities();
 
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
@@ -484,6 +495,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 writer.WriteNumber("order", c.Order);
                 writer.WriteBoolean("enabled", c.Enabled);
                 writer.WriteBoolean("connected", c.Connected);
+                writer.WriteBoolean("rumbleEnabled", c.RumbleEnabled);
                 writer.WriteString("profileId", c.ProfileId ?? "");
                 writer.WriteString("profileName", c.ProfileName ?? "");
                 writer.WriteBoolean("hasProfileOverride", c.HasProfileOverride);
@@ -548,10 +560,14 @@ public sealed class GameBarFileIpcService : IDisposable
             }
             writer.WriteEndArray();
 
-            // legacy paddle map for older widgets
+            // legacy paddle map for older widgets — only paddles this pad actually has
             writer.WriteStartObject("paddleMap");
             foreach (var paddle in new[] { "L4", "L5", "R4", "R5" })
+            {
+                if (caps.Inputs.All(i => !i.Id.Equals(paddle, StringComparison.OrdinalIgnoreCase)))
+                    continue;
                 writer.WriteString(paddle, active.GetAction(paddle).ToDisplayString());
+            }
             writer.WriteEndObject();
 
             writer.WriteEndObject();

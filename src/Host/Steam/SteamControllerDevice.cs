@@ -26,13 +26,19 @@ public sealed class SteamControllerDevice : IDisposable
     const byte CmdSetDefaultMappings = 0x85;
     const byte CmdSetSettings = 0x87;
     const byte CmdLoadDefaultSettings = 0x8E;
-    const byte CmdTriggerRumble = 0xEB; // SC1 / classic Valve HID
+    const byte CmdTriggerHapticPulse = 0x8F; // SC1 trackpad haptics (emulates rumble)
     const byte OutReportHapticRumble = 0x80; // SC2 Triton output report
+    const byte HapticPadLeft = 0;
+    const byte HapticPadRight = 1;
+    const byte HapticPadBoth = 2;
     // Valve settings IDs (see linux hid-steam.c)
     const byte SettingLeftTrackpadMode = 0x07;
     const byte SettingRightTrackpadMode = 0x08;
     const byte SettingImuMode = 0x30;
+    const byte SettingWirelessPacketVersion = 0x31;
     const byte SettingSteamWatchdogEnable = 0x47; // 71
+    /// <summary>Raw accel + raw gyro + orientation (classic SC IMU bitmask).</summary>
+    const ushort ImuModeFull = 0x001C;
     /// <summary>TRACKPAD_NONE in Valve firmware — not 0 (0 = ABSOLUTE_MOUSE).</summary>
     const byte TrackpadNone = 0x07;
 
@@ -44,7 +50,7 @@ public sealed class SteamControllerDevice : IDisposable
     byte _rumbleRight;
     CancellationTokenSource? _rumbleCts;
     Task? _rumbleTask;
-    readonly byte[] _readBuffer = new byte[64];
+    readonly byte[] _readBuffer = new byte[128];
 
     public bool IsOpen => _stream is not null;
     public string? DevicePath => _device?.DevicePath;
@@ -310,23 +316,51 @@ public sealed class SteamControllerDevice : IDisposable
     {
         if (_stream is null) return false;
         bool ok = SendCommand(CmdClearDigitalMappings, ReadOnlySpan<byte>.Empty);
+
         // Trackpads to NONE so firmware stops mouse emulation.
-        // Also disable the Steam-presence watchdog (Deck/SC2) that re-enables lizard.
-        Span<byte> settings = stackalloc byte[12];
-        settings[0] = SettingLeftTrackpadMode;
-        settings[1] = TrackpadNone;
-        settings[2] = 0;
-        settings[3] = SettingRightTrackpadMode;
-        settings[4] = TrackpadNone;
-        settings[5] = 0;
-        settings[6] = SettingSteamWatchdogEnable;
-        settings[7] = 0;
-        settings[8] = 0;
-        settings[9] = SettingImuMode;
-        settings[10] = 0x18; // raw accel+gyro low byte
-        settings[11] = 0x00;
-        ok &= SendCommand(CmdSetSettings, settings);
-        return ok;
+        Span<byte> trackpads = stackalloc byte[6];
+        trackpads[0] = SettingLeftTrackpadMode;
+        trackpads[1] = TrackpadNone;
+        trackpads[2] = 0;
+        trackpads[3] = SettingRightTrackpadMode;
+        trackpads[4] = TrackpadNone;
+        trackpads[5] = 0;
+        ok &= SendCommand(CmdSetSettings, trackpads);
+        if (!ok) return false;
+
+        if (IsSc2)
+        {
+            // Disable Steam-presence watchdog that re-enables lizard; enable IMU.
+            Span<byte> sc2 = stackalloc byte[6];
+            sc2[0] = SettingSteamWatchdogEnable;
+            sc2[1] = 0;
+            sc2[2] = 0;
+            sc2[3] = SettingImuMode;
+            sc2[4] = (byte)(ImuModeFull & 0xFF);
+            sc2[5] = (byte)(ImuModeFull >> 8);
+            ok &= SendCommand(CmdSetSettings, sc2);
+            return ok;
+        }
+
+        // SC1: gyro/accel are off until SETTING_IMU_MODE is set. Also bump wireless
+        // packet version so dongle reports include the IMU fields.
+        Span<byte> sc1 = stackalloc byte[6];
+        sc1[0] = SettingWirelessPacketVersion;
+        sc1[1] = 2;
+        sc1[2] = 0;
+        sc1[3] = SettingImuMode;
+        sc1[4] = (byte)(ImuModeFull & 0xFF); // orient|accel|gyro
+        sc1[5] = (byte)(ImuModeFull >> 8);
+        if (!SendCommand(CmdSetSettings, sc1))
+        {
+            // Older wired firmware may reject wireless packet version — still try IMU alone.
+            Span<byte> imuOnly = stackalloc byte[3];
+            imuOnly[0] = SettingImuMode;
+            imuOnly[1] = (byte)(ImuModeFull & 0xFF);
+            imuOnly[2] = 0;
+            _ = SendCommand(CmdSetSettings, imuOnly);
+        }
+        return true;
     }
 
     public bool EnableLizardMode()
@@ -341,7 +375,7 @@ public sealed class SteamControllerDevice : IDisposable
 
     /// <summary>
     /// Pulse both motors briefly so the user can identify which pad is which.
-    /// SC1 uses feature cmd 0xEB; SC2 (Triton) uses output report 0x80 and must be resent.
+    /// SC1 emulates rumble via trackpad haptic pulses; SC2 uses output report 0x80.
     /// </summary>
     public async Task<bool> IdentifyAsync(CancellationToken ct = default)
     {
@@ -389,8 +423,8 @@ public sealed class SteamControllerDevice : IDisposable
                 return;
             }
 
-            // SC2 haptics need ~40ms refresh; SC1 feature rumble usually sticks, but
-            // refreshing both keeps behaviour consistent if the host drops a write.
+            // SC2 haptics need ~40ms refresh; SC1 haptic pulses are finite so refresh
+            // both to keep continuous rumble / identify buzz going.
             if (_rumbleTask is null || _rumbleTask.IsCompleted)
                 StartRumbleLoopUnlocked();
         }
@@ -401,13 +435,15 @@ public sealed class SteamControllerDevice : IDisposable
         StopRumbleLoopUnlocked();
         _rumbleCts = new CancellationTokenSource();
         var ct = _rumbleCts.Token;
+        // SC1 pulses are short — refresh a bit faster so the buzz doesn't stutter.
+        int periodMs = IsSc2 ? 40 : 25;
         _rumbleTask = Task.Run(async () =>
         {
             try
             {
                 while (!ct.IsCancellationRequested)
                 {
-                    await Task.Delay(40, ct).ConfigureAwait(false);
+                    await Task.Delay(periodMs, ct).ConfigureAwait(false);
                     byte l, r;
                     lock (_rumbleGate)
                     {
@@ -439,32 +475,61 @@ public sealed class SteamControllerDevice : IDisposable
 
     void WriteRumbleMotors(byte leftMotor, byte rightMotor)
     {
-        // Xbox motors are 0–255; SC speeds are 16-bit.
-        ushort left = (ushort)(leftMotor * 257);
-        ushort right = (ushort)(rightMotor * 257);
         if (IsSc2)
+        {
+            // Xbox motors are 0–255; SC2 speeds are 16-bit.
+            ushort left = (ushort)(leftMotor * 257);
+            ushort right = (ushort)(rightMotor * 257);
             WriteTritonRumble(left, right);
+        }
         else
-            SendClassicRumble(0, left, right,
-                leftMotor > 0 ? (byte)2 : (byte)0,
-                rightMotor > 0 ? (byte)2 : (byte)0);
+        {
+            // Classic SC1 has no rumble motors — Steam emulates rumble with trackpad haptics.
+            WriteClassicHapticRumble(leftMotor, rightMotor);
+        }
     }
 
     bool IsSc2 => Sc2ProductIds.Contains(ProductId);
 
-    bool SendClassicRumble(ushort intensity, ushort leftSpeed, ushort rightSpeed, byte leftGain, byte rightGain)
+    /// <summary>
+    /// SC1: map Xbox motors onto left/right trackpad haptic pulse trains (cmd 0x8F).
+    /// </summary>
+    bool WriteClassicHapticRumble(byte leftMotor, byte rightMotor)
     {
-        Span<byte> payload = stackalloc byte[9];
-        payload[0] = 0;
-        payload[1] = (byte)(intensity & 0xFF);
-        payload[2] = (byte)(intensity >> 8);
-        payload[3] = (byte)(leftSpeed & 0xFF);
-        payload[4] = (byte)(leftSpeed >> 8);
-        payload[5] = (byte)(rightSpeed & 0xFF);
-        payload[6] = (byte)(rightSpeed >> 8);
-        payload[7] = leftGain;
-        payload[8] = rightGain;
-        return SendCommand(CmdTriggerRumble, payload);
+        if (leftMotor == 0 && rightMotor == 0)
+            return true;
+
+        bool ok = true;
+        if (leftMotor > 0)
+            ok &= SendHapticPulse(HapticPadLeft, leftMotor);
+        if (rightMotor > 0)
+            ok &= SendHapticPulse(HapticPadRight, rightMotor);
+        return ok;
+    }
+
+    bool SendHapticPulse(byte pad, byte motor)
+    {
+        // Left and right are swapped on this report for legacy reasons (hid-steam).
+        byte wirePad = pad < HapticPadBoth ? (byte)(pad ^ 1) : pad;
+
+        // Duration/interval are microseconds (max ~65ms). Shape a short buzz that the
+        // rumble refresh loop re-fires so continuous game rumble feels sustained.
+        // Keep SC1 quieter than a full-gain Steam buzz — trackpad haptics are loud.
+        ushort duration = (ushort)(800 + motor * 10);    // ~0.8–3.4 ms on-time
+        ushort interval = (ushort)(duration + 1200);
+        ushort count = (ushort)Math.Clamp(6 + motor / 12, 6, 24);
+        byte gain = 0; // 0 dB — positive gain is piercingly loud on SC1
+
+        Span<byte> payload = stackalloc byte[8];
+        payload[0] = wirePad;
+        payload[1] = (byte)(duration & 0xFF);
+        payload[2] = (byte)(duration >> 8);
+        payload[3] = (byte)(interval & 0xFF);
+        payload[4] = (byte)(interval >> 8);
+        payload[5] = (byte)(count & 0xFF);
+        payload[6] = (byte)(count >> 8);
+        payload[7] = gain;
+        return SendCommand(CmdTriggerHapticPulse, payload);
     }
 
     /// <summary>SC2 / Triton haptic rumble output report (SDL ID_OUT_REPORT_HAPTIC_RUMBLE).</summary>
@@ -517,7 +582,10 @@ public sealed class SteamControllerDevice : IDisposable
             _stream.ReadTimeout = timeoutMs;
             int read = _stream.Read(_readBuffer, 0, _readBuffer.Length);
             if (read <= 0) return false;
-            return SteamReportParser.TryParse(_readBuffer.AsSpan(0, read), out state);
+            var span = _readBuffer.AsSpan(0, read);
+            return IsSc2
+                ? SteamReportParser.TryParse(span, out state)
+                : SteamClassicReportParser.TryParse(span, out state);
         }
         catch (TimeoutException)
         {

@@ -46,6 +46,26 @@ namespace MistMapper.GameBarWidget
             ("A", "A"), ("B", "B"), ("X", "X"), ("Y", "Y"),
         };
 
+        IEnumerable<(string Id, string Label)> GyroActivationChoicesForModel()
+        {
+            foreach (var choice in GyroActivationChoices)
+            {
+                if (_controllerModel == "sc1" && Sc1AbsentInputs.Contains(choice.Id))
+                    continue;
+                if (_controllerModel == "sc1" && choice.Id is "R4" or "L4")
+                {
+                    yield return (choice.Id, choice.Id == "L4" ? "Left Grip" : "Right Grip");
+                    continue;
+                }
+                if (_controllerModel is "dualsense" or "dualsense-edge")
+                {
+                    if (DualSenseAbsentInputs.Contains(choice.Id)) continue;
+                    if (_controllerModel != "dualsense-edge" && choice.Id is "L4" or "R4") continue;
+                }
+                yield return choice;
+            }
+        }
+
         static string FormatModeLabel(string mode) => mode switch
         {
             "Off" => "Off",
@@ -184,6 +204,7 @@ namespace MistMapper.GameBarWidget
             public int Order;
             public bool Connected;
             public bool HasProfileOverride;
+            public bool RumbleEnabled = true;
         }
 
         // Sensitivity/deadzone/invert state from host
@@ -440,10 +461,12 @@ namespace MistMapper.GameBarWidget
             || PreviewLayoutView.Visibility == Visibility.Visible
             || SettingsView.Visibility == Visibility.Visible
             || AdvancedSettingsView.Visibility == Visibility.Visible
-            || ListPickerView.Visibility == Visibility.Visible;
+            || ListPickerView.Visibility == Visibility.Visible
+            || TextPromptView.Visibility == Visibility.Visible;
 
         TaskCompletionSource<bool> _advancedSettingsTcs;
         TaskCompletionSource<int> _listPickerTcs;
+        TaskCompletionSource<string> _textPromptTcs;
 
         void HighlightViewEditTabs()
         {
@@ -463,9 +486,12 @@ namespace MistMapper.GameBarWidget
             NoControllerBanner.Visibility = Visibility.Collapsed;
             ControllerLayoutGrid.Visibility = Visibility.Visible;
 
-            var path = _controllerModel == "sc1"
-                ? "ms-appx:///Assets/controller-outline-sc1.png"
-                : "ms-appx:///Assets/controller-outline-sc2.png";
+            var path = _controllerModel switch
+            {
+                "sc1" => "ms-appx:///Assets/controller-outline-sc1.png",
+                "dualsense" or "dualsense-edge" => "ms-appx:///Assets/controller-outline-dualsense.png",
+                _ => "ms-appx:///Assets/controller-outline-sc2.png"
+            };
             ControllerOutlineImage.Source = new Windows.UI.Xaml.Media.Imaging.BitmapImage(new Uri(path));
         }
 
@@ -529,7 +555,7 @@ namespace MistMapper.GameBarWidget
 
                 var modelHint = new TextBlock
                 {
-                    Text = pad.Model == "sc1" ? "Steam Controller" : (pad.Model == "sc2" ? "Steam Controller 2" : "Controller"),
+                    Text = ModelDisplayName(pad.Model),
                     FontSize = 12,
                     Margin = new Thickness(0, 0, 0, 8),
                     Foreground = (Windows.UI.Xaml.Media.Brush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"]
@@ -577,6 +603,18 @@ namespace MistMapper.GameBarWidget
                 AddAction("Down", pad.DeviceKey, ReorderDown_Click, i < ordered.Count - 1);
                 card.Children.Add(actions);
 
+                var rumbleToggle = new ToggleSwitch
+                {
+                    Header = "Rumble",
+                    IsOn = pad.RumbleEnabled,
+                    Tag = pad.DeviceKey,
+                    Margin = new Thickness(0, 10, 0, 0),
+                    OffContent = "Off",
+                    OnContent = "On"
+                };
+                rumbleToggle.Toggled += SettingsRumble_Toggled;
+                card.Children.Add(rumbleToggle);
+
                 SettingsControllerList.Children.Add(card);
             }
         }
@@ -585,7 +623,7 @@ namespace MistMapper.GameBarWidget
         {
             if (!string.IsNullOrWhiteSpace(pad.DisplayName))
                 return pad.DisplayName.Trim();
-            return pad.Model == "sc1" ? "Steam Controller" : (pad.Model == "sc2" ? "Steam Controller 2" : "Controller");
+            return ModelDisplayName(pad.Model);
         }
 
         async void SettingsIdentify_Click(object sender, RoutedEventArgs e)
@@ -594,6 +632,26 @@ namespace MistMapper.GameBarWidget
             StatusText.Text = "Identifying…";
             var resp = await IpcClient.SendAsync("identifyController", key);
             StatusText.Text = resp.IsOk ? "Vibrated pad" : (resp.Error ?? "Identify failed");
+        }
+
+        async void SettingsRumble_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (_suppress) return;
+            if (!(sender is ToggleSwitch toggle) || !(toggle.Tag is string key)) return;
+            var on = toggle.IsOn;
+            var resp = await IpcClient.SendAsync("setControllerRumble", key + "\t" + (on ? "true" : "false"));
+            if (!resp.IsOk)
+            {
+                _suppress = true;
+                toggle.IsOn = !on;
+                _suppress = false;
+                StatusText.Text = resp.Error ?? "Rumble setting failed";
+                return;
+            }
+            var pad = _controllers.FirstOrDefault(c =>
+                string.Equals(c.DeviceKey, key, StringComparison.OrdinalIgnoreCase));
+            if (pad != null) pad.RumbleEnabled = on;
+            StatusText.Text = on ? "Rumble on" : "Rumble off";
         }
 
         async void SettingsRename_Click(object sender, RoutedEventArgs e)
@@ -808,16 +866,34 @@ namespace MistMapper.GameBarWidget
             if (!string.IsNullOrWhiteSpace(pad.DisplayName))
             {
                 var custom = pad.DisplayName.Trim();
-                // Keep stock model labels short in the strip.
                 if (custom.Equals("Steam Controller 2", StringComparison.OrdinalIgnoreCase))
                     return "SC2";
                 if (custom.Equals("Steam Controller", StringComparison.OrdinalIgnoreCase))
                     return pad.Model == "sc1" ? "SC1" : "SC";
-                // Custom names: show up to ~14 chars.
+                if (custom.Equals("DualSense Edge", StringComparison.OrdinalIgnoreCase))
+                    return "Edge";
+                if (custom.Equals("DualSense", StringComparison.OrdinalIgnoreCase))
+                    return "DS";
                 return custom.Length <= 14 ? custom : custom.Substring(0, 13) + "…";
             }
-            return pad.Model == "sc1" ? "SC1" : (pad.Model == "sc2" ? "SC2" : "Pad");
+            return pad.Model switch
+            {
+                "sc1" => "SC1",
+                "sc2" => "SC2",
+                "dualsense" => "DS",
+                "dualsense-edge" => "Edge",
+                _ => "Pad"
+            };
         }
+
+        static string ModelDisplayName(string model) => model switch
+        {
+            "sc1" => "Steam Controller",
+            "sc2" => "Steam Controller 2",
+            "dualsense" => "DualSense",
+            "dualsense-edge" => "DualSense Edge",
+            _ => "Controller"
+        };
 
         async void SaveAs_Click(object sender, RoutedEventArgs e)
         {
@@ -1031,7 +1107,7 @@ namespace MistMapper.GameBarWidget
                     Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"]
                 });
 
-                foreach (var id in cat.InputIds)
+                foreach (var id in FilterInputsForModel(cat.InputIds))
                 {
                     var mapped = map.ContainsKey(id) ? map[id] : "None";
                     if (string.IsNullOrEmpty(mapped)) mapped = "None";
@@ -1093,11 +1169,28 @@ namespace MistMapper.GameBarWidget
 
         void WidgetPage_PreviewKeyDown(object sender, Windows.UI.Xaml.Input.KeyRoutedEventArgs e)
         {
-            // Don't steal keys while typing in a dialog text box
+            var key = e.Key;
+
+            if (TextPromptView.Visibility == Visibility.Visible)
+            {
+                if (key == Windows.System.VirtualKey.GamepadB || key == Windows.System.VirtualKey.Escape)
+                {
+                    TextPromptCancel_Click(this, new RoutedEventArgs());
+                    e.Handled = true;
+                }
+                else if (key == Windows.System.VirtualKey.GamepadA
+                         || key == Windows.System.VirtualKey.Enter)
+                {
+                    TextPromptSave_Click(this, new RoutedEventArgs());
+                    e.Handled = true;
+                }
+                return;
+            }
+
+            // Don't steal keys while typing in a text box
             if (FocusManager.GetFocusedElement() is TextBox)
                 return;
 
-            var key = e.Key;
             if (ListPickerView.Visibility == Visibility.Visible)
             {
                 if (key == Windows.System.VirtualKey.GamepadB || key == Windows.System.VirtualKey.Escape)
@@ -1183,7 +1276,9 @@ namespace MistMapper.GameBarWidget
             var modes = tag == "gyro" ? GyroModes : TrackpadModes;
             var labels = modes.Select(FormatModeLabel).ToArray();
             var current = _modeValues.ContainsKey(tag) ? _modeValues[tag] : "Off";
-            var title = tag == "gyro" ? "Gyro mode" : (tag == "left" ? "Left pad mode" : "Right pad mode");
+            var title = tag == "gyro"
+                ? "Gyro mode"
+                : ModeSurfaceLabel(tag) + " mode";
             var selected = await PickListIndexAsync(title, labels, FormatModeLabel(current));
             if (AdvancedSettingsView.Visibility != Visibility.Visible)
                 MainView.Visibility = Visibility.Visible;
@@ -1276,7 +1371,8 @@ namespace MistMapper.GameBarWidget
                 && SettingsView.Visibility != Visibility.Visible
                 && RemapView.Visibility != Visibility.Visible
                 && BrowseLayoutView.Visibility != Visibility.Visible
-                && PreviewLayoutView.Visibility != Visibility.Visible)
+                && PreviewLayoutView.Visibility != Visibility.Visible
+                && TextPromptView.Visibility != Visibility.Visible)
                 MainView.Visibility = Visibility.Visible;
         }
 
@@ -1285,19 +1381,76 @@ namespace MistMapper.GameBarWidget
             ListPickerView.Visibility = Visibility.Collapsed;
         }
 
-        static async Task<string> PromptTextAsync(string title, string header, string initial)
+        /// <summary>In-widget text prompt (ContentDialog chrome looks wrong in Game Bar).</summary>
+        async Task<string> PromptTextAsync(string title, string header, string initial)
         {
-            var box = new TextBox { Header = header, Text = initial ?? "" };
-            var dialog = new ContentDialog
+            _textPromptTcs?.TrySetResult(null);
+            _textPromptTcs = new TaskCompletionSource<string>();
+
+            TextPromptTitle.Text = title ?? "Name";
+            TextPromptHeader.Text = header ?? "";
+            TextPromptHeader.Visibility = string.IsNullOrWhiteSpace(header)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+            TextPromptBox.Text = initial ?? "";
+
+            MainView.Visibility = Visibility.Collapsed;
+            TextPromptView.Visibility = Visibility.Visible;
+
+            // Focus after layout so the caret is ready for keyboard / Game Bar.
+            _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
             {
-                Title = title,
-                Content = box,
-                PrimaryButtonText = "OK",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Primary
-            };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return null;
-            return box.Text;
+                TextPromptBox.Focus(FocusState.Programmatic);
+                TextPromptBox.SelectAll();
+            });
+
+            return await _textPromptTcs.Task;
+        }
+
+        void TextPromptBox_KeyDown(object sender, Windows.UI.Xaml.Input.KeyRoutedEventArgs e)
+        {
+            if (e.Key == Windows.System.VirtualKey.Enter)
+            {
+                TextPromptSave_Click(this, new RoutedEventArgs());
+                e.Handled = true;
+            }
+            else if (e.Key == Windows.System.VirtualKey.Escape)
+            {
+                TextPromptCancel_Click(this, new RoutedEventArgs());
+                e.Handled = true;
+            }
+        }
+
+        void TextPromptSave_Click(object sender, RoutedEventArgs e)
+        {
+            var text = TextPromptBox.Text ?? "";
+            _textPromptTcs?.TrySetResult(text);
+            CloseTextPrompt();
+            RestoreViewAfterTextPrompt();
+        }
+
+        void TextPromptCancel_Click(object sender, RoutedEventArgs e)
+        {
+            _textPromptTcs?.TrySetResult(null);
+            CloseTextPrompt();
+            RestoreViewAfterTextPrompt();
+        }
+
+        void CloseTextPrompt()
+        {
+            TextPromptView.Visibility = Visibility.Collapsed;
+        }
+
+        void RestoreViewAfterTextPrompt()
+        {
+            if (AdvancedSettingsView.Visibility == Visibility.Visible
+                || SettingsView.Visibility == Visibility.Visible
+                || RemapView.Visibility == Visibility.Visible
+                || BrowseLayoutView.Visibility == Visibility.Visible
+                || PreviewLayoutView.Visibility == Visibility.Visible
+                || ListPickerView.Visibility == Visibility.Visible)
+                return;
+            MainView.Visibility = Visibility.Visible;
         }
 
         // ═══════════════ Sensitivity / Invert IPC ═══════════════
@@ -1410,7 +1563,7 @@ namespace MistMapper.GameBarWidget
                 };
                 addBtn.Click += async (_, __) =>
                 {
-                    var available = GyroActivationChoices
+                    var available = GyroActivationChoicesForModel()
                         .Where(c => !draftButtons.Any(b => b.Equals(c.Id, StringComparison.OrdinalIgnoreCase)))
                         .ToList();
                     if (available.Count == 0)
@@ -1490,7 +1643,7 @@ namespace MistMapper.GameBarWidget
             var draftRot = _padRotation[side];
 
             AdvancedSettingsContent.Children.Clear();
-            AdvancedSettingsTitle.Text = side == "left" ? "Left trackpad" : "Right trackpad";
+            AdvancedSettingsTitle.Text = ModeSurfaceLabel(side);
             AdvancedSettingsSubtitle.Text = "B cancel · Save when done";
 
             AdvancedSettingsContent.Children.Add(SectionLabel("Trackball"));
@@ -1594,13 +1747,18 @@ namespace MistMapper.GameBarWidget
             return btn;
         }
 
-        static string GyroButtonLabel(string id)
+        string GyroButtonLabel(string id)
         {
-            foreach (var (choiceId, label) in GyroActivationChoices)
+            foreach (var (choiceId, label) in GyroActivationChoicesForModel())
             {
                 if (choiceId.Equals(id, StringComparison.OrdinalIgnoreCase))
                     return label;
             }
+            // Fallbacks for saved ids that aren't offered on this model.
+            if (id.Equals("L4", StringComparison.OrdinalIgnoreCase) && _controllerModel == "sc1")
+                return "Left Grip";
+            if (id.Equals("R4", StringComparison.OrdinalIgnoreCase) && _controllerModel == "sc1")
+                return "Right Grip";
             return id;
         }
 
@@ -1677,7 +1835,7 @@ namespace MistMapper.GameBarWidget
             {
                 var btn = new Button
                 {
-                    Content = cat.Name,
+                    Content = CategoryDisplayName(cat.Name),
                     Tag = cat.Name,
                     Style = (Style)Application.Current.Resources["PillButtonStyle"],
                     Padding = new Thickness(16, 10, 16, 10),
@@ -1692,6 +1850,13 @@ namespace MistMapper.GameBarWidget
             RebuildEditCategoryContent();
             // Layout must complete before we can scroll the active tab into view.
             _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, BringActiveCategoryTabIntoView);
+        }
+
+        string CategoryDisplayName(string categoryName)
+        {
+            if (categoryName == "Trackpads" && _controllerModel is "dualsense" or "dualsense-edge")
+                return "Touchpad";
+            return categoryName;
         }
 
         void EditCategoryTab_Click(object sender, RoutedEventArgs e)
@@ -1721,6 +1886,47 @@ namespace MistMapper.GameBarWidget
             }
         }
 
+        static readonly HashSet<string> Sc1AbsentInputs = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "RightStick", "RsClick", "RightStickTouch", "LeftStickTouch", "L5", "R5"
+        };
+
+        static readonly HashSet<string> DualSenseAbsentInputs = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "LeftTrackpad", "LeftTrackpadClick", "L5", "R5", "LeftStickTouch", "RightStickTouch"
+        };
+
+        IEnumerable<string> FilterInputsForModel(IEnumerable<string> inputIds)
+        {
+            if (_controllerModel == "sc1")
+                return inputIds.Where(id => !Sc1AbsentInputs.Contains(id));
+            if (_controllerModel is "dualsense" or "dualsense-edge")
+            {
+                var absent = DualSenseAbsentInputs;
+                if (_controllerModel != "dualsense-edge")
+                    return inputIds.Where(id => !absent.Contains(id) && id is not ("L4" or "R4"));
+                return inputIds.Where(id => !absent.Contains(id));
+            }
+            return inputIds;
+        }
+
+        IEnumerable<string> FilterModeKeysForModel(IEnumerable<string> modeKeys)
+        {
+            // DualSense has one capacitive surface (mapped as RightTrackpad), not two Steam pads.
+            if (_controllerModel is "dualsense" or "dualsense-edge")
+                return modeKeys.Where(k => k is not "left");
+            return modeKeys;
+        }
+
+        string ModeSurfaceLabel(string modeKey) => modeKey switch
+        {
+            "gyro" => "Gyro",
+            "left" => "Left pad",
+            "right" when _controllerModel is "dualsense" or "dualsense-edge" => "Touchpad",
+            "right" => "Right pad",
+            _ => modeKey
+        };
+
         void RebuildEditCategoryContentCore()
         {
             EditCategoryContent.Children.Clear();
@@ -1730,7 +1936,7 @@ namespace MistMapper.GameBarWidget
             // Input cards
             if (category.InputIds.Length > 0)
             {
-                foreach (var inputId in category.InputIds)
+                foreach (var inputId in FilterInputsForModel(category.InputIds))
                     AddInputCard(inputId);
             }
 
@@ -1738,9 +1944,9 @@ namespace MistMapper.GameBarWidget
             if (category.ModeKeys.Length > 0)
             {
                 AddSectionHeader("Behavior");
-                foreach (var modeKey in category.ModeKeys)
+                foreach (var modeKey in FilterModeKeysForModel(category.ModeKeys))
                 {
-                    var label = modeKey == "gyro" ? "Gyro" : (modeKey == "left" ? "Left pad" : "Right pad");
+                    var label = ModeSurfaceLabel(modeKey);
                     var current = _modeValues.ContainsKey(modeKey) ? _modeValues[modeKey] : "Off";
 
                     var row = new Grid { Margin = new Thickness(0, 0, 0, 8) };
@@ -2483,13 +2689,52 @@ namespace MistMapper.GameBarWidget
 
             if (_controllerModel == "sc1")
                 BuildSc1Labels();
+            else if (_controllerModel is "dualsense" or "dualsense-edge")
+                BuildDualSenseLabels();
             else
                 BuildSc2Labels();
 
             // Modes that aren't a single face button — append under the matching side.
-            AddModeCallout(LeftLabelsPanel, "left", "L Pad");
-            AddModeCallout(RightLabelsPanel, "right", "R Pad");
-            AddModeCallout(RightLabelsPanel, "gyro", "Gyro");
+            if (_controllerModel is "dualsense" or "dualsense-edge")
+            {
+                AddModeCallout(RightLabelsPanel, "right", "Touchpad");
+                AddModeCallout(RightLabelsPanel, "gyro", "Gyro");
+            }
+            else
+            {
+                AddModeCallout(LeftLabelsPanel, "left", "L Pad");
+                AddModeCallout(RightLabelsPanel, "right", "R Pad");
+                AddModeCallout(RightLabelsPanel, "gyro", "Gyro");
+            }
+        }
+
+        void BuildDualSenseLabels()
+        {
+            AddCallout(LeftLabelsPanel, "Lb", "L1");
+            AddCallout(LeftLabelsPanel, "Lt", "L2");
+            AddCallout(LeftLabelsPanel, "View", "Create");
+            AddCallout(LeftLabelsPanel, "LeftStick", "L Stick");
+            AddCallout(LeftLabelsPanel, "LsClick", "L3");
+            AddCallout(LeftLabelsPanel, "DpadUp", "DPad U");
+            AddCallout(LeftLabelsPanel, "DpadDown", "DPad D");
+            AddCallout(LeftLabelsPanel, "DpadLeft", "DPad L");
+            AddCallout(LeftLabelsPanel, "DpadRight", "DPad R");
+            if (_controllerModel == "dualsense-edge")
+                AddCallout(LeftLabelsPanel, "L4", "L Paddle");
+
+            AddCallout(RightLabelsPanel, "Rb", "R1");
+            AddCallout(RightLabelsPanel, "Rt", "R2");
+            AddCallout(RightLabelsPanel, "Menu", "Options");
+            AddCallout(RightLabelsPanel, "Y", "△");
+            AddCallout(RightLabelsPanel, "X", "□");
+            AddCallout(RightLabelsPanel, "B", "○");
+            AddCallout(RightLabelsPanel, "A", "✕");
+            AddCallout(RightLabelsPanel, "RightStick", "R Stick");
+            AddCallout(RightLabelsPanel, "RsClick", "R3");
+            AddCallout(RightLabelsPanel, "RightTrackpadClick", "Touch Click");
+            AddCallout(RightLabelsPanel, "Steam", "PS");
+            if (_controllerModel == "dualsense-edge")
+                AddCallout(RightLabelsPanel, "R4", "R Paddle");
         }
 
         void BuildSc2Labels()
@@ -2526,8 +2771,7 @@ namespace MistMapper.GameBarWidget
         {
             AddCallout(LeftLabelsPanel, "Lb", "LB");
             AddCallout(LeftLabelsPanel, "Lt", "LT");
-            AddCallout(LeftLabelsPanel, "L4", "L4");
-            AddCallout(LeftLabelsPanel, "L5", "L5");
+            AddCallout(LeftLabelsPanel, "L4", "L Grip");
             AddCallout(LeftLabelsPanel, "View", "Select");
             AddCallout(LeftLabelsPanel, "LeftTrackpadClick", "L Pad Click");
             AddCallout(LeftLabelsPanel, "DpadUp", "Pad U");
@@ -2539,16 +2783,13 @@ namespace MistMapper.GameBarWidget
 
             AddCallout(RightLabelsPanel, "Rb", "RB");
             AddCallout(RightLabelsPanel, "Rt", "RT");
-            AddCallout(RightLabelsPanel, "R4", "R4");
-            AddCallout(RightLabelsPanel, "R5", "R5");
+            AddCallout(RightLabelsPanel, "R4", "R Grip");
             AddCallout(RightLabelsPanel, "Menu", "Start");
             AddCallout(RightLabelsPanel, "RightTrackpadClick", "R Pad Click");
             AddCallout(RightLabelsPanel, "Y", "Y");
             AddCallout(RightLabelsPanel, "X", "X");
             AddCallout(RightLabelsPanel, "B", "B");
             AddCallout(RightLabelsPanel, "A", "A");
-            AddCallout(RightLabelsPanel, "RightStick", "R Stick");
-            AddCallout(RightLabelsPanel, "RsClick", "RS Click");
             AddCallout(RightLabelsPanel, "Steam", "Steam");
         }
 
@@ -2599,14 +2840,17 @@ namespace MistMapper.GameBarWidget
                 return spot.GetNamedString("label", inputId);
 
             // Friendly fallbacks when layout metadata is missing
-            if (inputId.Equals("L4", StringComparison.OrdinalIgnoreCase)) return "L4 (Upper Left Grip)";
+            if (inputId.Equals("L4", StringComparison.OrdinalIgnoreCase))
+                return _controllerModel == "sc1" ? "Left Grip" : "L4 (Upper Left Grip)";
             if (inputId.Equals("L5", StringComparison.OrdinalIgnoreCase)) return "L5 (Lower Left Grip)";
-            if (inputId.Equals("R4", StringComparison.OrdinalIgnoreCase)) return "R4 (Upper Right Grip)";
+            if (inputId.Equals("R4", StringComparison.OrdinalIgnoreCase))
+                return _controllerModel == "sc1" ? "Right Grip" : "R4 (Upper Right Grip)";
             if (inputId.Equals("R5", StringComparison.OrdinalIgnoreCase)) return "R5 (Lower Right Grip)";
             if (inputId.Equals("View", StringComparison.OrdinalIgnoreCase)) return "Select";
             if (inputId.Equals("Menu", StringComparison.OrdinalIgnoreCase)) return "Start";
             if (inputId.Equals("LeftTrackpadClick", StringComparison.OrdinalIgnoreCase)) return "L Pad Click";
-            if (inputId.Equals("RightTrackpadClick", StringComparison.OrdinalIgnoreCase)) return "R Pad Click";
+            if (inputId.Equals("RightTrackpadClick", StringComparison.OrdinalIgnoreCase))
+                return _controllerModel is "dualsense" or "dualsense-edge" ? "Touchpad Click" : "R Pad Click";
             return inputId;
         }
 
@@ -2691,7 +2935,8 @@ namespace MistMapper.GameBarWidget
                     ProfileId = item.GetNamedString("profileId", ""),
                     Order = (int)item.GetNamedNumber("order", i),
                     Connected = item.GetNamedBoolean("connected", true),
-                    HasProfileOverride = item.GetNamedBoolean("hasProfileOverride", false)
+                    HasProfileOverride = item.GetNamedBoolean("hasProfileOverride", false),
+                    RumbleEnabled = item.GetNamedBoolean("rumbleEnabled", true)
                 });
             }
 

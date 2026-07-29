@@ -165,8 +165,8 @@ public sealed class MappingEngine
                 return -1f;
             // While still touching, keep a snappier return so resting on the pad centers.
             if (touching)
-                return Math.Max(MouseJoystickFrictionPerSec, TrackballFrictionPerSec(settings.TrackballFriction));
-            return TrackballFrictionPerSec(settings.TrackballFriction);
+                return Math.Max(MouseJoystickFrictionPerSec, MouseJoystickTrackballReturnPerSec(settings.TrackballFriction));
+            return MouseJoystickTrackballReturnPerSec(settings.TrackballFriction);
         }
 
         float left = FromPad(profile.LeftTrackpad, profile.LeftTrackpadSettings, frame.GetDigital("LeftTrackpad"));
@@ -511,13 +511,23 @@ public sealed class MappingEngine
 
     static float TrackballFrictionPerSec(TrackballFriction f) => f switch
     {
-        // Usable floor for mouse-joystick return; 0.5 made tips linger like a stuck stick.
-        TrackballFriction.Off => 2f,
-        TrackballFriction.Low => 4f,
-        TrackballFriction.Medium => 8f,
-        TrackballFriction.High => 14f,
-        TrackballFriction.ExtraHigh => 22f,
-        _ => 8f
+        TrackballFriction.Off => 0.8f,
+        TrackballFriction.Low => 2f,
+        TrackballFriction.Medium => 5f,
+        TrackballFriction.High => 10f,
+        TrackballFriction.ExtraHigh => 16f,
+        _ => 5f
+    };
+
+    /// <summary>Return-to-center rates for mouse-joystick trackball (lower = longer linger).</summary>
+    static float MouseJoystickTrackballReturnPerSec(TrackballFriction f) => f switch
+    {
+        TrackballFriction.Off => 0.5f,
+        TrackballFriction.Low => 1.0f,
+        TrackballFriction.Medium => 2.2f,
+        TrackballFriction.High => 5.0f,
+        TrackballFriction.ExtraHigh => 9.0f,
+        _ => 2.2f
     };
 
     static (float X, float Y) Rotate2D(float x, float y, float degrees)

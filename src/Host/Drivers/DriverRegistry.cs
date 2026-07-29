@@ -1,3 +1,4 @@
+using MistMapper.Host.DualSense;
 using MistMapper.Host.Steam;
 using MistMapper.Shared;
 
@@ -43,29 +44,52 @@ public sealed class DriverRegistry
     }
 
     /// <summary>
-    /// Enumerate physical SC1/SC2 pads not already claimed by <paramref name="excludeDeviceKeys"/>.
+    /// Enumerate physical pads (Steam Controllers + DualSense) not already claimed.
     /// </summary>
-    public static IReadOnlyList<(string DeviceKey, string DevicePath, string Model)> EnumeratePhysicalPads(
+    public static IReadOnlyList<(string DeviceKey, string DevicePath, string Model, string DriverId)> EnumeratePhysicalPads(
         IEnumerable<string>? excludeDeviceKeys = null)
     {
-        var list = new List<(string, string, string)>();
-        foreach (var dev in SteamControllerDevice.EnumerateInstances(excludeDeviceKeys))
+        var exclude = excludeDeviceKeys?.ToList() ?? [];
+        var list = new List<(string, string, string, string)>();
+
+        foreach (var dev in SteamControllerDevice.EnumerateInstances(exclude))
         {
             var path = dev.DevicePath!;
             var key = SteamControllerDevice.PhysicalDeviceKey(path);
             var model = SteamControllerDevice.ClassifyModel(dev.ProductID);
-            list.Add((key, path, model));
+            list.Add((key, path, model, DriverIds.SteamController));
         }
+
+        var claimed = exclude.Concat(list.Select(x => x.Item1)).ToList();
+        foreach (var dev in DualSenseDevice.EnumerateInstances(claimed))
+        {
+            var path = dev.DevicePath!;
+            var key = DualSenseDevice.PhysicalDeviceKey(path);
+            var model = DualSenseDevice.ClassifyModel(dev.ProductID);
+            list.Add((key, path, model, DriverIds.DualSense));
+        }
+
         return list;
+    }
+
+    public static IControllerDriver? OpenPad(string driverId, string devicePathOrKey)
+    {
+        if (string.Equals(driverId, DriverIds.DualSense, StringComparison.OrdinalIgnoreCase))
+            return DualSenseDriver.TryOpenPath(devicePathOrKey);
+        return SteamControllerDriver.TryOpenPath(devicePathOrKey);
     }
 
     public static SteamControllerDriver? OpenSteamController(string devicePathOrKey) =>
         SteamControllerDriver.TryOpenPath(devicePathOrKey);
 
-    public DriverCapabilities GetCapabilities(string? driverId = null)
+    public DriverCapabilities GetCapabilities(string? driverId = null, string? model = null)
     {
         if (!string.IsNullOrEmpty(driverId) && FindById(driverId!) is { } found)
             return found.Capabilities;
-        return SteamControllerCapabilities.Create();
+
+        if (string.Equals(driverId, DriverIds.DualSense, StringComparison.OrdinalIgnoreCase))
+            return DualSenseCapabilities.Create(model);
+
+        return SteamControllerCapabilities.Create(model);
     }
 }
