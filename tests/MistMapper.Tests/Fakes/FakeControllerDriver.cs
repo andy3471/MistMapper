@@ -10,6 +10,8 @@ public sealed class FakeControllerDriver : IControllerDriver
 
     public string Id { get; init; } = "fake-controller";
     public string DisplayName { get; init; } = "Fake Controller";
+    public string DeviceKey { get; init; } = "fake-controller";
+    public string ControllerModel { get; init; } = "sc2";
     public DriverCapabilities Capabilities { get; init; } = new()
     {
         DriverId = "fake-controller",

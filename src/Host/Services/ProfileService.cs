@@ -423,34 +423,192 @@ public sealed class ProfileService
     public IReadOnlyList<ControllerSlot> GetControllerSlots()
     {
         lock (_lock)
-            return _doc.ControllerSlots.Select(s => new ControllerSlot
+            return _doc.ControllerSlots.Select(CloneSlot).OrderBy(s => s.Order).ToList();
+    }
+
+    public ControllerSlot? FindControllerSlot(string deviceKey)
+    {
+        if (string.IsNullOrWhiteSpace(deviceKey)) return null;
+        lock (_lock)
+        {
+            var s = _doc.ControllerSlots.FirstOrDefault(x =>
+                x.DeviceKey.Equals(deviceKey, StringComparison.OrdinalIgnoreCase));
+            return s is null ? null : CloneSlot(s);
+        }
+    }
+
+    /// <summary>
+    /// Upsert connected pad metadata; restores order/override from store when known.
+    /// New pads append at the end of the order list.
+    /// </summary>
+    public ControllerSlot EnsureControllerSlot(string deviceKey, string? displayName, string? model)
+    {
+        if (string.IsNullOrWhiteSpace(deviceKey))
+            throw new ArgumentException("deviceKey required");
+
+        lock (_lock)
+        {
+            var slot = _doc.ControllerSlots.FirstOrDefault(s =>
+                s.DeviceKey.Equals(deviceKey, StringComparison.OrdinalIgnoreCase));
+            var dirty = false;
+            if (slot is null)
             {
-                Order = s.Order,
-                DriverId = s.DriverId,
-                ProfileId = s.ProfileId,
-                DisplayName = s.DisplayName,
-                Enabled = s.Enabled
-            }).OrderBy(s => s.Order).ToList();
+                var nextOrder = _doc.ControllerSlots.Count == 0
+                    ? 0
+                    : _doc.ControllerSlots.Max(s => s.Order) + 1;
+                slot = new ControllerSlot
+                {
+                    DeviceKey = deviceKey,
+                    DriverId = DriverIds.SteamController,
+                    Order = nextOrder,
+                    Enabled = true
+                };
+                _doc.ControllerSlots.Add(slot);
+                dirty = true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(displayName)
+                && string.IsNullOrWhiteSpace(slot.DisplayName))
+            {
+                slot.DisplayName = displayName;
+                dirty = true;
+            }
+            if (!string.IsNullOrWhiteSpace(model)
+                && !string.Equals(slot.LastModel, model, StringComparison.OrdinalIgnoreCase))
+            {
+                slot.LastModel = model;
+                dirty = true;
+            }
+            if (string.IsNullOrEmpty(slot.DriverId))
+            {
+                slot.DriverId = DriverIds.SteamController;
+                dirty = true;
+            }
+
+            if (dirty)
+                SaveUnlocked();
+            return CloneSlot(slot);
+        }
     }
 
     public void SetControllerSlotOrder(List<ControllerSlot> slots)
     {
         lock (_lock)
         {
-            _doc.ControllerSlots = slots.Select((s, i) => new ControllerSlot
+            var byKey = _doc.ControllerSlots.ToDictionary(
+                s => string.IsNullOrEmpty(s.DeviceKey) ? s.DriverId + "#" + s.Order : s.DeviceKey,
+                s => s,
+                StringComparer.OrdinalIgnoreCase);
+
+            var rewritten = new List<ControllerSlot>();
+            for (var i = 0; i < slots.Count; i++)
             {
-                Order = i,
-                DriverId = s.DriverId,
-                ProfileId = s.ProfileId,
-                DisplayName = s.DisplayName,
-                Enabled = s.Enabled
-            }).ToList();
+                var incoming = slots[i];
+                var key = !string.IsNullOrEmpty(incoming.DeviceKey)
+                    ? incoming.DeviceKey
+                    : incoming.DriverId;
+                if (string.IsNullOrEmpty(key)) continue;
+
+                if (!byKey.TryGetValue(key, out var existing)
+                    && !string.IsNullOrEmpty(incoming.DeviceKey))
+                {
+                    existing = _doc.ControllerSlots.FirstOrDefault(s =>
+                        s.DeviceKey.Equals(incoming.DeviceKey, StringComparison.OrdinalIgnoreCase));
+                }
+
+                rewritten.Add(new ControllerSlot
+                {
+                    Order = i,
+                    DeviceKey = incoming.DeviceKey ?? existing?.DeviceKey ?? "",
+                    DriverId = string.IsNullOrEmpty(incoming.DriverId)
+                        ? (existing?.DriverId ?? DriverIds.SteamController)
+                        : incoming.DriverId,
+                    ProfileId = incoming.ProfileId ?? existing?.ProfileId,
+                    DisplayName = incoming.DisplayName ?? existing?.DisplayName,
+                    LastModel = incoming.LastModel ?? existing?.LastModel,
+                    Enabled = incoming.Enabled
+                });
+            }
+
+            // Keep disconnected remembered slots not in the reorder payload, appended after.
+            var keptKeys = new HashSet<string>(
+                rewritten.Select(s => s.DeviceKey),
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var orphan in _doc.ControllerSlots
+                         .Where(s => !string.IsNullOrEmpty(s.DeviceKey) && !keptKeys.Contains(s.DeviceKey))
+                         .OrderBy(s => s.Order))
+            {
+                orphan.Order = rewritten.Count;
+                rewritten.Add(CloneSlot(orphan));
+            }
+
+            _doc.ControllerSlots = rewritten;
             SaveUnlocked();
         }
         Changed?.Invoke();
     }
 
-    public void SetControllerSlotProfile(string driverId, string? profileId)
+    public void SetControllerSlotProfile(string deviceKey, string? profileId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceKey))
+            throw new ArgumentException("deviceKey required");
+
+        lock (_lock)
+        {
+            var slot = _doc.ControllerSlots.FirstOrDefault(s =>
+                s.DeviceKey.Equals(deviceKey, StringComparison.OrdinalIgnoreCase));
+            if (slot is null)
+            {
+                slot = new ControllerSlot
+                {
+                    Order = _doc.ControllerSlots.Count,
+                    DeviceKey = deviceKey,
+                    DriverId = DriverIds.SteamController
+                };
+                _doc.ControllerSlots.Add(slot);
+            }
+
+            if (profileId is not null
+                && _doc.Profiles.All(p => p.Id != profileId))
+                throw new ArgumentException("Unknown profile id");
+
+            slot.ProfileId = profileId;
+            SaveUnlocked();
+        }
+        Changed?.Invoke();
+    }
+
+    public void SetControllerSlotDisplayName(string deviceKey, string? displayName)
+    {
+        if (string.IsNullOrWhiteSpace(deviceKey))
+            throw new ArgumentException("deviceKey required");
+
+        lock (_lock)
+        {
+            var slot = _doc.ControllerSlots.FirstOrDefault(s =>
+                s.DeviceKey.Equals(deviceKey, StringComparison.OrdinalIgnoreCase));
+            if (slot is null)
+            {
+                slot = new ControllerSlot
+                {
+                    Order = _doc.ControllerSlots.Count,
+                    DeviceKey = deviceKey,
+                    DriverId = DriverIds.SteamController
+                };
+                _doc.ControllerSlots.Add(slot);
+            }
+
+            var trimmed = string.IsNullOrWhiteSpace(displayName) ? null : displayName.Trim();
+            if (trimmed is { Length: > 48 })
+                trimmed = trimmed[..48];
+            slot.DisplayName = trimmed;
+            SaveUnlocked();
+        }
+        Changed?.Invoke();
+    }
+
+    /// <summary>Legacy API — prefers DeviceKey when provided via driverId field misuse; prefer SetControllerSlotProfile(deviceKey).</summary>
+    public void SetControllerSlotProfileByDriver(string driverId, string? profileId)
     {
         lock (_lock)
         {
@@ -461,7 +619,8 @@ public sealed class ProfileService
                 slot = new ControllerSlot
                 {
                     Order = _doc.ControllerSlots.Count,
-                    DriverId = driverId
+                    DriverId = driverId,
+                    DeviceKey = driverId
                 };
                 _doc.ControllerSlots.Add(slot);
             }
@@ -470,6 +629,17 @@ public sealed class ProfileService
         }
         Changed?.Invoke();
     }
+
+    static ControllerSlot CloneSlot(ControllerSlot s) => new()
+    {
+        Order = s.Order,
+        DeviceKey = s.DeviceKey,
+        DriverId = s.DriverId,
+        ProfileId = s.ProfileId,
+        DisplayName = s.DisplayName,
+        LastModel = s.LastModel,
+        Enabled = s.Enabled
+    };
 
     public void BindToGame(string profileId, string matchExe, string? matchPathContains = null, string? displayName = null)
     {
@@ -630,14 +800,7 @@ public sealed class ProfileService
         StartWithWindows = d.StartWithWindows,
         Profiles = d.Profiles.Select(CloneProfile).ToList(),
         ProfileBindings = d.ProfileBindings.Select(CloneBinding).ToList(),
-        ControllerSlots = d.ControllerSlots.Select(s => new ControllerSlot
-        {
-            Order = s.Order,
-            DriverId = s.DriverId,
-            ProfileId = s.ProfileId,
-            DisplayName = s.DisplayName,
-            Enabled = s.Enabled
-        }).ToList()
+        ControllerSlots = d.ControllerSlots.Select(CloneSlot).ToList()
     };
 
     static ProfileBinding CloneBinding(ProfileBinding b) => new()

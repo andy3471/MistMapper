@@ -168,8 +168,13 @@ public sealed class ProfileStoreDocument
 public sealed class ControllerSlot
 {
     public int Order { get; set; }
-    public string DriverId { get; set; } = "";
+    /// <summary>Stable HID physical key (or test id). Primary identity for multi-pad.</summary>
+    public string DeviceKey { get; set; } = "";
+    public string DriverId { get; set; } = DriverIds.SteamController;
+    /// <summary>Per-pad profile override; null uses shared default / game binding.</summary>
     public string? ProfileId { get; set; }
     public string? DisplayName { get; set; }
+    /// <summary>"sc1" / "sc2" remembered for UI when disconnected.</summary>
+    public string? LastModel { get; set; }
     public bool Enabled { get; set; } = true;
 }

@@ -217,7 +217,40 @@ public sealed class IpcServer : IDisposable
             case IpcCommands.SetControllerSlotProfile:
             {
                 var p = Deserialize<SetControllerSlotProfilePayload>(request.Payload);
-                _profiles.SetControllerSlotProfile(p.DriverId, p.ProfileId);
+                if (!string.IsNullOrWhiteSpace(p.DeviceKey))
+                    _profiles.SetControllerSlotProfile(p.DeviceKey, p.ProfileId);
+                else
+                    _profiles.SetControllerSlotProfileByDriver(p.DriverId, p.ProfileId);
+                break;
+            }
+
+            case IpcCommands.SetSelectedController:
+            {
+                var p = Deserialize<SetSelectedControllerPayload>(request.Payload);
+                _bridge.SetSelectedController(p.DeviceKey);
+                break;
+            }
+
+            case IpcCommands.MakeControllerProfileUnique:
+            {
+                var p = Deserialize<MakeControllerProfileUniquePayload>(request.Payload);
+                var id = _bridge.MakeControllerProfileUnique(p.DeviceKey, p.SourceProfileId);
+                response.Payload = JsonSerializer.SerializeToElement(new { profileId = id }, IpcProtocol.JsonOptions);
+                break;
+            }
+
+            case IpcCommands.IdentifyController:
+            {
+                var p = Deserialize<IdentifyControllerPayload>(request.Payload);
+                _bridge.IdentifyControllerAsync(p.DeviceKey).GetAwaiter().GetResult();
+                break;
+            }
+
+            case IpcCommands.RenameController:
+            {
+                var p = Deserialize<RenameControllerPayload>(request.Payload);
+                _bridge.RenameController(p.DeviceKey, p.DisplayName);
+                response.Payload = JsonSerializer.SerializeToElement(_bridge.Status, IpcProtocol.JsonOptions);
                 break;
             }
 

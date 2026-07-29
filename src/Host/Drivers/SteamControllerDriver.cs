@@ -6,14 +6,16 @@ namespace MistMapper.Host.Drivers;
 public sealed class SteamControllerDriver : IControllerDriver
 {
     SteamControllerDevice? _device;
+    string _deviceKey = "";
+    string _model = "";
 
     public string Id => DriverIds.SteamController;
-    public string DisplayName => "Steam Controller";
+    public string DisplayName { get; private set; } = "Steam Controller";
     public DriverCapabilities Capabilities { get; } = SteamControllerCapabilities.Create();
     public bool IsConnected => _device?.IsOpen == true;
+    public string DeviceKey => _deviceKey;
     public int ProductId => _device?.ProductId ?? 0;
-    public string ControllerModel =>
-        _device is null ? "" : SteamControllerDevice.ClassifyModel(_device.ProductId);
+    public string ControllerModel => _model;
 
     public bool TryOpen()
     {
@@ -24,19 +26,60 @@ public sealed class SteamControllerDriver : IControllerDriver
             device.Dispose();
             return false;
         }
-        _device = device;
+        Attach(device);
         return true;
+    }
+
+    public bool TryOpen(string devicePathOrKey)
+    {
+        Close();
+        var device = new SteamControllerDevice();
+        if (!device.Open(devicePathOrKey))
+        {
+            device.Dispose();
+            return false;
+        }
+        Attach(device);
+        return true;
+    }
+
+    public static SteamControllerDriver? TryOpenPath(string devicePathOrKey)
+    {
+        var driver = new SteamControllerDriver();
+        if (!driver.TryOpen(devicePathOrKey))
+        {
+            driver.Dispose();
+            return null;
+        }
+        return driver;
+    }
+
+    void Attach(SteamControllerDevice device)
+    {
+        _device = device;
+        var path = device.DevicePath ?? "";
+        _deviceKey = string.IsNullOrEmpty(path)
+            ? Guid.NewGuid().ToString("N")
+            : SteamControllerDevice.PhysicalDeviceKey(path);
+        _model = device.Model;
+        DisplayName = SteamControllerDevice.DisplayNameForModel(_model);
     }
 
     public void Close()
     {
         _device?.Dispose();
         _device = null;
+        _deviceKey = "";
+        _model = "";
+        DisplayName = "Steam Controller";
     }
 
     public bool PrepareExclusive() => _device?.DisableLizardMode() == true;
     public bool RestoreExclusive() => _device?.EnableLizardMode() == true;
     public bool KeepAlive() => _device?.SendKeepalive() == true;
+
+    public Task<bool> IdentifyAsync(CancellationToken ct = default) =>
+        _device?.IdentifyAsync(ct) ?? Task.FromResult(false);
 
     public bool TryRead(out InputFrame frame)
     {

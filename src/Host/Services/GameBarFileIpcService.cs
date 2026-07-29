@@ -168,7 +168,7 @@ public sealed class GameBarFileIpcService : IDisposable
                     throw new InvalidOperationException("Steam/Guide is locked to Xbox Guide.");
                 if (!Enum.TryParse<XboxOutput>(bits[2], true, out var xbox))
                     throw new ArgumentException("Invalid xbox");
-                bits[0] = _bridge.EnsureLayoutForCurrentGame(bits[0]);
+                bits[0] = _bridge.ResolveRemapTargetProfileId(bits[0]);
                 _profiles.Remap(bits[0], phys, xbox);
                 return null;
             }
@@ -182,7 +182,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 if (bits.Length < 3) throw new ArgumentException("Invalid remapAction payload");
                 if (bits[1].Equals("Steam", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Steam/Guide is locked to Xbox Guide.");
-                bits[0] = _bridge.EnsureLayoutForCurrentGame(bits[0]);
+                bits[0] = _bridge.ResolveRemapTargetProfileId(bits[0]);
                 var action = ParseAction(bits);
                 _profiles.RemapAction(bits[0], bits[1], action);
                 return null;
@@ -199,7 +199,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 if (bits.Length < 3) throw new ArgumentException("Invalid setTrackpadMode payload");
                 if (!Enum.TryParse<TrackpadMode>(bits[2], true, out var mode))
                     throw new ArgumentException("Invalid trackpad mode");
-                bits[0] = _bridge.EnsureLayoutForCurrentGame(bits[0]);
+                bits[0] = _bridge.ResolveRemapTargetProfileId(bits[0]);
                 _profiles.SetTrackpad(bits[0], bits[1].Equals("left", StringComparison.OrdinalIgnoreCase), mode);
                 return null;
             }
@@ -211,7 +211,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 if (bits.Length < 2) throw new ArgumentException("Invalid setGyroMode payload");
                 if (!Enum.TryParse<GyroMode>(bits[1], true, out var mode))
                     throw new ArgumentException("Invalid gyro mode");
-                bits[0] = _bridge.EnsureLayoutForCurrentGame(bits[0]);
+                bits[0] = _bridge.ResolveRemapTargetProfileId(bits[0]);
                 _profiles.SetGyro(bits[0], mode);
                 return null;
             }
@@ -233,7 +233,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 var bits = payload.Split('\t');
                 if (bits.Length < 2)
                     throw new ArgumentException("profileId and layoutId required");
-                bits[0] = _bridge.EnsureLayoutForCurrentGame(bits[0]);
+                bits[0] = _bridge.ResolveRemapTargetProfileId(bits[0]);
                 _profiles.ApplyLayout(bits[0], bits[1]);
                 return null;
             }
@@ -303,7 +303,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 // JSON payload matching SensitivityPayload
                 var p = JsonSerializer.Deserialize<SensitivityPayload>(payload, CaseInsensitiveJson)
                     ?? throw new ArgumentException("Invalid sensitivity payload");
-                p.ProfileId = _bridge.EnsureLayoutForCurrentGame(p.ProfileId);
+                p.ProfileId = _bridge.ResolveRemapTargetProfileId(p.ProfileId);
                 _profiles.SetSensitivity(p.ProfileId, p);
                 return null;
             }
@@ -311,6 +311,60 @@ public sealed class GameBarFileIpcService : IDisposable
             case "ensureOfficialLayouts":
                 _profiles.EnsureOfficialLayouts();
                 return null;
+
+            case "setSelectedController":
+                _bridge.SetSelectedController(payload.Trim());
+                return null;
+
+            case "setControllerSlotOrder":
+            {
+                // JSON array of { deviceKey, ... } in desired order
+                var slots = JsonSerializer.Deserialize<List<ControllerSlot>>(payload, CaseInsensitiveJson)
+                    ?? throw new ArgumentException("Invalid setControllerSlotOrder payload");
+                _profiles.SetControllerSlotOrder(slots);
+                return null;
+            }
+
+            case "setControllerSlotProfile":
+            {
+                // deviceKey \t profileId| (empty clears override)
+                var bits = payload.Split('\t');
+                if (bits.Length < 1 || string.IsNullOrWhiteSpace(bits[0]))
+                    throw new ArgumentException("deviceKey required");
+                var profileId = bits.Length > 1 && !string.IsNullOrWhiteSpace(bits[1]) ? bits[1] : null;
+                _profiles.SetControllerSlotProfile(bits[0].Trim(), profileId);
+                return null;
+            }
+
+            case "makeControllerProfileUnique":
+            {
+                // deviceKey [\t sourceProfileId]
+                var bits = payload.Split('\t');
+                if (bits.Length < 1 || string.IsNullOrWhiteSpace(bits[0]))
+                    throw new ArgumentException("deviceKey required");
+                var source = bits.Length > 1 && !string.IsNullOrWhiteSpace(bits[1]) ? bits[1] : null;
+                return _bridge.MakeControllerProfileUnique(bits[0].Trim(), source);
+            }
+
+            case "identifyController":
+            {
+                var key = payload.Trim();
+                if (string.IsNullOrWhiteSpace(key))
+                    throw new ArgumentException("deviceKey required");
+                _bridge.IdentifyControllerAsync(key).GetAwaiter().GetResult();
+                return null;
+            }
+
+            case "renameController":
+            {
+                // deviceKey \t displayName (empty name clears custom label)
+                var bits = payload.Split('\t');
+                if (bits.Length < 1 || string.IsNullOrWhiteSpace(bits[0]))
+                    throw new ArgumentException("deviceKey required");
+                var name = bits.Length > 1 ? bits[1] : "";
+                _bridge.RenameController(bits[0].Trim(), string.IsNullOrWhiteSpace(name) ? null : name);
+                return null;
+            }
 
             default:
                 throw new InvalidOperationException("Unknown command: " + command);
@@ -346,9 +400,8 @@ public sealed class GameBarFileIpcService : IDisposable
     {
         if (_localStatePath is null) return;
         var status = _bridge.Status;
-        // Always publish the user's saved profile for the widget UI — never the Game Bar runtime override.
-        var active = _profiles.GetUserProfiles().FirstOrDefault(p => p.Id == status.ActiveProfileId)
-                     ?? _profiles.ActiveProfile;
+        // Selected pad's resolved profile for the widget UI.
+        var active = _bridge.GetSelectedResolvedProfile();
         var profiles = _profiles.GetUserProfiles();
         var caps = _bridge.Drivers.GetCapabilities(status.ActiveDriverId);
 
@@ -382,6 +435,8 @@ public sealed class GameBarFileIpcService : IDisposable
             writer.WriteString("controllerModel", status.ControllerConnected
                 ? (string.IsNullOrEmpty(status.ControllerModel) ? "sc2" : status.ControllerModel)
                 : "");
+            writer.WriteString("selectedDeviceKey", status.SelectedDeviceKey ?? "");
+            writer.WriteBoolean("selectedHasProfileOverride", _bridge.SelectedPadHasProfileOverride());
             writer.WriteString("runState", status.State.ToString());
             writer.WriteBoolean("gameBarOverrideActive", status.GameBarOverrideActive);
             writer.WriteString("leftTrackpad", active.LeftTrackpad.ToString());
@@ -403,6 +458,27 @@ public sealed class GameBarFileIpcService : IDisposable
             writer.WriteBoolean("invertTrackpadY", active.InvertTrackpadY);
             writer.WriteBoolean("invertGyroX", active.InvertGyroX);
             writer.WriteBoolean("invertGyroY", active.InvertGyroY);
+
+            writer.WriteStartArray("controllers");
+            foreach (var c in status.Controllers.OrderBy(x => x.Order))
+            {
+                writer.WriteStartObject();
+                writer.WriteString("deviceKey", c.DeviceKey);
+                writer.WriteString("model", c.Model);
+                writer.WriteString("displayName", c.DisplayName);
+                writer.WriteNumber("order", c.Order);
+                writer.WriteBoolean("enabled", c.Enabled);
+                writer.WriteBoolean("connected", c.Connected);
+                writer.WriteString("profileId", c.ProfileId ?? "");
+                writer.WriteString("profileName", c.ProfileName ?? "");
+                writer.WriteBoolean("hasProfileOverride", c.HasProfileOverride);
+                writer.WriteStartArray("pressed");
+                foreach (var id in c.PressedInputs)
+                    writer.WriteStringValue(id);
+                writer.WriteEndArray();
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
 
             writer.WriteStartArray("profiles");
             foreach (var p in profiles)

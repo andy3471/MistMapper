@@ -7,7 +7,7 @@ public sealed class ControllerSlotTests
     [Fact]
     public void Slots_default_to_enabled()
     {
-        var slot = new ControllerSlot { DriverId = "test-driver", Order = 0 };
+        var slot = new ControllerSlot { DeviceKey = "dev-1", DriverId = "test-driver", Order = 0 };
 
         slot.Enabled.Should().BeTrue();
     }
@@ -17,12 +17,12 @@ public sealed class ControllerSlotTests
     {
         var slots = new List<ControllerSlot>
         {
-            new() { DriverId = "c", Order = 2 },
-            new() { DriverId = "a", Order = 0 },
-            new() { DriverId = "b", Order = 1 },
+            new() { DeviceKey = "c", Order = 2 },
+            new() { DeviceKey = "a", Order = 0 },
+            new() { DeviceKey = "b", Order = 1 },
         };
 
-        var ordered = slots.OrderBy(s => s.Order).Select(s => s.DriverId).ToList();
+        var ordered = slots.OrderBy(s => s.Order).Select(s => s.DeviceKey).ToList();
 
         ordered.Should().ContainInOrder("a", "b", "c");
     }
@@ -32,13 +32,14 @@ public sealed class ControllerSlotTests
     {
         var slots = new List<ControllerSlot>
         {
-            new() { DriverId = "first", Order = 5 },
-            new() { DriverId = "second", Order = 10 },
-            new() { DriverId = "third", Order = 15 },
+            new() { DeviceKey = "first", Order = 5 },
+            new() { DeviceKey = "second", Order = 10 },
+            new() { DeviceKey = "third", Order = 15 },
         };
 
         var reordered = slots.Select((s, i) => new ControllerSlot
         {
+            DeviceKey = s.DeviceKey,
             DriverId = s.DriverId,
             Order = i,
             ProfileId = s.ProfileId,
@@ -58,12 +59,15 @@ public sealed class ControllerSlotTests
         doc.ControllerSlots.Add(new ControllerSlot
         {
             Order = 0,
+            DeviceKey = "hid-path-1",
             DriverId = "steam-controller",
             ProfileId = "profile-1",
-            DisplayName = "My Controller"
+            DisplayName = "My Controller",
+            LastModel = "sc2"
         });
 
         doc.ControllerSlots.Should().HaveCount(1);
+        doc.ControllerSlots[0].DeviceKey.Should().Be("hid-path-1");
         doc.ControllerSlots[0].DriverId.Should().Be("steam-controller");
         doc.ControllerSlots[0].ProfileId.Should().Be("profile-1");
     }
@@ -71,7 +75,7 @@ public sealed class ControllerSlotTests
     [Fact]
     public void Slot_can_have_null_profile_for_unassigned()
     {
-        var slot = new ControllerSlot { DriverId = "test", Order = 0 };
+        var slot = new ControllerSlot { DeviceKey = "test", DriverId = "test", Order = 0 };
 
         slot.ProfileId.Should().BeNull();
     }

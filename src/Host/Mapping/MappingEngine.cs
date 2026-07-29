@@ -35,7 +35,11 @@ public sealed class MappingEngine
         _mouse = mouse ?? Win32MouseSink.Instance;
     }
 
-    public Xbox360InputState Map(InputFrame frame, ControllerProfile profile)
+    /// <param name="allowKeyboardMouse">
+    /// When false, Xbox mapping still runs but OS keyboard/mouse inject is skipped
+    /// (non-primary pads in multi-controller mode).
+    /// </param>
+    public Xbox360InputState Map(InputFrame frame, ControllerProfile profile, bool allowKeyboardMouse = true)
     {
         var outState = new Xbox360InputState();
         uint buttons = 0;
@@ -97,8 +101,17 @@ public sealed class MappingEngine
         if (mouseJoyActive)
             WriteMouseJoystick(ref outState);
 
-        SyncKeys(desiredKeys);
-        SyncMouse(desiredMouse);
+        if (allowKeyboardMouse)
+        {
+            SyncKeys(desiredKeys);
+            SyncMouse(desiredMouse);
+        }
+        else
+        {
+            // Drop any held inject from this engine if it lost KB/mouse privilege.
+            if (_heldKeys.Count > 0 || _heldMouse.Count > 0)
+                ReleaseAllInjected();
+        }
 
         outState.Buttons = buttons;
         return outState;

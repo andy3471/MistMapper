@@ -52,6 +52,10 @@ public static class IpcCommands
     public const string GetControllerSlots = "getControllerSlots";
     public const string SetControllerSlotOrder = "setControllerSlotOrder";
     public const string SetControllerSlotProfile = "setControllerSlotProfile";
+    public const string SetSelectedController = "setSelectedController";
+    public const string MakeControllerProfileUnique = "makeControllerProfileUnique";
+    public const string IdentifyController = "identifyController";
+    public const string RenameController = "renameController";
 }
 
 public sealed class RemapButtonPayload
@@ -140,6 +144,31 @@ public sealed class SetControllerSlotOrderPayload
 
 public sealed class SetControllerSlotProfilePayload
 {
+    /// <summary>Preferred: HID physical key.</summary>
+    public string DeviceKey { get; set; } = "";
+    /// <summary>Legacy fallback when DeviceKey is empty.</summary>
     public string DriverId { get; set; } = "";
     public string? ProfileId { get; set; }
+}
+
+public sealed class SetSelectedControllerPayload
+{
+    public string DeviceKey { get; set; } = "";
+}
+
+public sealed class MakeControllerProfileUniquePayload
+{
+    public string DeviceKey { get; set; } = "";
+    public string? SourceProfileId { get; set; }
+}
+
+public sealed class IdentifyControllerPayload
+{
+    public string DeviceKey { get; set; } = "";
+}
+
+public sealed class RenameControllerPayload
+{
+    public string DeviceKey { get; set; } = "";
+    public string? DisplayName { get; set; }
 }

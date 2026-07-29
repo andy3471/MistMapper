@@ -14,8 +14,9 @@ public sealed class SteamControllerDevice : IDisposable
     public static readonly int[] Sc2ProductIds = [0x1302, 0x1303, 0x1304];
     /// <summary>Original Steam Controller 2015 (SC1) product IDs.</summary>
     public static readonly int[] Sc1ProductIds = [0x1102, 0x1142];
-    /// <summary>IDs the host currently opens (SC2). SC1 listed for model detection / future support.</summary>
-    public static readonly int[] ProductIds = Sc2ProductIds;
+    /// <summary>IDs the host opens: Steam Controller 2015 (SC1) and 2026 (SC2).</summary>
+    public static readonly int[] ProductIds =
+        Sc1ProductIds.Concat(Sc2ProductIds).Distinct().ToArray();
 
     public const int VendorUsagePage = 0xFF00;
 
@@ -25,6 +26,8 @@ public sealed class SteamControllerDevice : IDisposable
     const byte CmdSetDefaultMappings = 0x85;
     const byte CmdSetSettings = 0x87;
     const byte CmdLoadDefaultSettings = 0x8E;
+    const byte CmdTriggerRumble = 0xEB; // SC1 / classic Valve HID
+    const byte OutReportHapticRumble = 0x80; // SC2 Triton output report
     // Valve settings IDs (see linux hid-steam.c)
     const byte SettingLeftTrackpadMode = 0x07;
     const byte SettingRightTrackpadMode = 0x08;
@@ -41,6 +44,7 @@ public sealed class SteamControllerDevice : IDisposable
     public bool IsOpen => _stream is not null;
     public string? DevicePath => _device?.DevicePath;
     public int ProductId => _device?.ProductID ?? 0;
+    public string Model => ClassifyModel(ProductId);
 
     public static string ClassifyModel(int productId)
     {
@@ -48,6 +52,131 @@ public sealed class SteamControllerDevice : IDisposable
         if (Sc1ProductIds.Contains(productId)) return "sc1";
         return "";
     }
+
+    /// <summary>
+    /// Unique HID interfaces suitable for bridging (one preferred collection per physical pad).
+    /// Paths already in <paramref name="excludeDeviceKeys"/> are skipped.
+    /// </summary>
+    public static IReadOnlyList<HidDevice> EnumerateInstances(IEnumerable<string>? excludeDeviceKeys = null)
+    {
+        var exclude = new HashSet<string>(excludeDeviceKeys ?? [], StringComparer.OrdinalIgnoreCase);
+        // Group by physical device stem so we only open one collection per pad.
+        var bestPerPad = new Dictionary<string, HidDevice>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dev in FilterBridgeInterfaces(Enumerate().ToList()))
+        {
+            if (string.IsNullOrEmpty(dev.DevicePath)) continue;
+            var key = PhysicalDeviceKey(dev.DevicePath!);
+            if (exclude.Contains(key)) continue;
+            if (!bestPerPad.ContainsKey(key))
+                bestPerPad[key] = dev;
+        }
+
+        return bestPerPad.Values
+            .OrderBy(d => d.DevicePath, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>
+    /// SC2 exposes several USB interfaces that all accept lizard-mode feature reports
+    /// (e.g. mi_02&amp;col03 and a parallel mi_06). Prefer vendor collection col03 so one
+    /// physical pad does not appear as multiple bridge slots.
+    /// </summary>
+    public static IReadOnlyList<HidDevice> FilterBridgeInterfaces(IReadOnlyList<HidDevice> candidates)
+    {
+        if (candidates.Count == 0) return candidates;
+
+        var paths = candidates
+            .Select(d => d.DevicePath ?? "")
+            .Where(p => p.Length > 0)
+            .ToList();
+        var preferredPaths = new HashSet<string>(
+            PreferBridgeInterfacePaths(paths),
+            StringComparer.OrdinalIgnoreCase);
+
+        return candidates
+            .Where(d => !string.IsNullOrEmpty(d.DevicePath) && preferredPaths.Contains(d.DevicePath!))
+            .OrderBy(d => MiNumber(d.DevicePath))
+            .ThenBy(d => d.DevicePath, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>
+    /// From a set of HID paths for Valve pads, pick the ones we should try to open.
+    /// SC2 exposes many sibling interfaces (mi_02..mi_06); prefer mi_02&amp;col03 which is
+    /// unique per physical pad. Fall back to any col03, then anything remaining.
+    /// Finally collapse by <see cref="PhysicalDeviceKey"/> (Container ID when available).
+    /// </summary>
+    public static IReadOnlyList<string> PreferBridgeInterfacePaths(IEnumerable<string> devicePaths)
+    {
+        var list = devicePaths.Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
+        if (list.Count == 0) return list;
+
+        static bool HasMi02Col03(string p) =>
+            p.Contains("&mi_02", StringComparison.OrdinalIgnoreCase)
+            && p.Contains("col03", StringComparison.OrdinalIgnoreCase);
+
+        static bool HasCol03(string p) =>
+            p.Contains("col03", StringComparison.OrdinalIgnoreCase);
+
+        var pool = list.Where(HasMi02Col03).ToList();
+        if (pool.Count == 0)
+            pool = list.Where(HasCol03).ToList();
+        if (pool.Count == 0)
+            pool = list;
+
+        return pool
+            .OrderBy(MiNumber)
+            .ThenByDescending(HasCol03)
+            .ThenBy(p => p, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(PhysicalDeviceKey, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>Stable key for a physical pad (Windows Container ID when available).</summary>
+    public static string PhysicalDeviceKey(string devicePath)
+    {
+        if (DeviceContainerId.TryGet(devicePath, out var containerId))
+            return "container:" + containerId.ToString("D");
+
+        // Fallback when SetupAPI lookup fails: strip &mi_ / &col from the hardware-id segment.
+        var path = devicePath ?? "";
+        path = StripHardwareSuffix(path, "&col");
+        path = StripHardwareSuffix(path, "&mi_");
+        return path;
+    }
+
+    static string StripHardwareSuffix(string path, string marker)
+    {
+        var idx = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) return path;
+
+        var end = idx + marker.Length;
+        while (end < path.Length && (char.IsDigit(path[end]) || path[end] == '_'))
+            end++;
+
+        return path[..idx] + path[end..];
+    }
+
+    static int MiNumber(string? devicePath)
+    {
+        if (string.IsNullOrEmpty(devicePath)) return int.MaxValue;
+        var idx = devicePath.IndexOf("&mi_", StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) return int.MaxValue;
+        var start = idx + 4;
+        var end = start;
+        while (end < devicePath.Length && char.IsDigit(devicePath[end]))
+            end++;
+        return int.TryParse(devicePath[start..end], out var n) ? n : int.MaxValue;
+    }
+
+    public static string DisplayNameForModel(string model) => model switch
+    {
+        "sc1" => "Steam Controller",
+        "sc2" => "Steam Controller 2",
+        _ => "Steam Controller"
+    };
 
     public static IEnumerable<HidDevice> Enumerate()
     {
@@ -98,7 +227,7 @@ public sealed class SteamControllerDevice : IDisposable
     public bool Open()
     {
         Close();
-        foreach (var dev in Enumerate())
+        foreach (var dev in EnumerateInstances())
         {
             if (TryOpen(dev))
                 return true;
@@ -106,7 +235,32 @@ public sealed class SteamControllerDevice : IDisposable
         return false;
     }
 
-    bool TryOpen(HidDevice device)
+    public bool Open(string devicePath)
+    {
+        Close();
+        if (string.IsNullOrWhiteSpace(devicePath))
+            return false;
+
+        foreach (var dev in Enumerate())
+        {
+            if (!string.Equals(dev.DevicePath, devicePath, StringComparison.OrdinalIgnoreCase))
+                continue;
+            return TryOpen(dev);
+        }
+
+        // Path may be a physical key (without col) — open best matching collection.
+        var physical = PhysicalDeviceKey(devicePath);
+        foreach (var dev in EnumerateInstances())
+        {
+            if (string.Equals(PhysicalDeviceKey(dev.DevicePath!), physical, StringComparison.OrdinalIgnoreCase))
+                return TryOpen(dev);
+        }
+        return false;
+    }
+
+    public bool TryOpen(HidDevice device) => TryOpenDevice(device);
+
+    bool TryOpenDevice(HidDevice device)
     {
         HidStream? stream = null;
         try
@@ -177,6 +331,99 @@ public sealed class SteamControllerDevice : IDisposable
     }
 
     public bool SendKeepalive() => DisableLizardMode();
+
+    /// <summary>
+    /// Pulse both motors briefly so the user can identify which pad is which.
+    /// SC1 uses feature cmd 0xEB; SC2 (Triton) uses output report 0x80 and must be resent.
+    /// </summary>
+    public async Task<bool> IdentifyAsync(CancellationToken ct = default)
+    {
+        if (_stream is null) return false;
+
+        const int durationMs = 450;
+        const int resendMs = 40;
+        // Strong-ish identify pulse (0xFFFF ≈ full).
+        const ushort speed = 0xC000;
+
+        var deadline = DateTime.UtcNow.AddMilliseconds(durationMs);
+        var any = false;
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (IsSc2)
+                any |= WriteTritonRumble(speed, speed);
+            else
+                any |= SendClassicRumble(0, speed, speed, 2, 0);
+
+            try { await Task.Delay(resendMs, ct); }
+            catch (OperationCanceledException) { break; }
+        }
+
+        // Stop motors.
+        if (IsSc2)
+            WriteTritonRumble(0, 0);
+        else
+            SendClassicRumble(0, 0, 0, 0, 0);
+
+        return any;
+    }
+
+    bool IsSc2 => Sc2ProductIds.Contains(ProductId);
+
+    bool SendClassicRumble(ushort intensity, ushort leftSpeed, ushort rightSpeed, byte leftGain, byte rightGain)
+    {
+        Span<byte> payload = stackalloc byte[9];
+        payload[0] = 0;
+        payload[1] = (byte)(intensity & 0xFF);
+        payload[2] = (byte)(intensity >> 8);
+        payload[3] = (byte)(leftSpeed & 0xFF);
+        payload[4] = (byte)(leftSpeed >> 8);
+        payload[5] = (byte)(rightSpeed & 0xFF);
+        payload[6] = (byte)(rightSpeed >> 8);
+        payload[7] = leftGain;
+        payload[8] = rightGain;
+        return SendCommand(CmdTriggerRumble, payload);
+    }
+
+    /// <summary>SC2 / Triton haptic rumble output report (SDL ID_OUT_REPORT_HAPTIC_RUMBLE).</summary>
+    bool WriteTritonRumble(ushort leftSpeed, ushort rightSpeed)
+    {
+        if (_stream is null) return false;
+
+        // Report is 10 bytes of content; HID write often expects a full 64-byte buffer.
+        var buffer = new byte[64];
+        buffer[0] = OutReportHapticRumble; // report id
+        buffer[1] = 0; // type
+        buffer[2] = 0; // intensity lo
+        buffer[3] = 0; // intensity hi
+        buffer[4] = (byte)(leftSpeed & 0xFF);
+        buffer[5] = (byte)(leftSpeed >> 8);
+        buffer[6] = 0; // left gain
+        buffer[7] = (byte)(rightSpeed & 0xFF);
+        buffer[8] = (byte)(rightSpeed >> 8);
+        buffer[9] = 0; // right gain
+
+        lock (_writeLock)
+        {
+            try
+            {
+                _stream.Write(buffer, 0, buffer.Length);
+                return true;
+            }
+            catch
+            {
+                try
+                {
+                    _stream.Write(buffer, 0, 10);
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+        }
+    }
 
     public bool TryReadState(out MistMapper.Shared.SteamControllerState state, int timeoutMs = 50)
     {

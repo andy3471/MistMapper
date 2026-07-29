@@ -85,7 +85,7 @@ namespace MistMapper.GameBarWidget
             var requestFile = await folder.CreateFileAsync(RequestFileName, CreationCollisionOption.ReplaceExisting);
             await FileIO.WriteTextAsync(requestFile, requestText);
 
-            for (int attempt = 0; attempt < 30; ++attempt)
+            for (int attempt = 0; attempt < 50; ++attempt)
             {
                 await Task.Delay(100);
                 try

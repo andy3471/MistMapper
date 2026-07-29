@@ -82,6 +82,13 @@
 
                 <!-- ──── VIEW PANEL ──── -->
                 <StackPanel x:Name="ViewPanel">
+                    <Grid x:Name="ViewControllerStrip" Margin="0,0,0,10" Visibility="Collapsed">
+                        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                                      HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled" ZoomMode="Disabled">
+                            <StackPanel x:Name="ViewControllerTabs" Orientation="Horizontal"/>
+                        </ScrollViewer>
+                    </Grid>
+
                     <Border x:Name="NoControllerBanner"
                             Background="#662A5A7A" BorderBrush="#993D7EA6" BorderThickness="1"
                             Padding="20,24" CornerRadius="12" Margin="0,0,0,12" Visibility="Collapsed">
@@ -131,6 +138,13 @@
 
                 <!-- ──── EDIT PANEL ──── -->
                 <StackPanel x:Name="EditPanel" Visibility="Collapsed">
+                    <Grid x:Name="EditControllerStrip" Margin="0,0,0,12" Visibility="Collapsed">
+                        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                                      HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled" ZoomMode="Disabled">
+                            <StackPanel x:Name="EditControllerTabs" Orientation="Horizontal"/>
+                        </ScrollViewer>
+                    </Grid>
+
                     <!-- Compact current-layout strip -->
                     <Grid Margin="0,0,0,14">
                         <Grid.ColumnDefinitions>
@@ -213,6 +227,17 @@
             </Grid>
             <ScrollViewer Grid.Row="1" Padding="16,8,16,16" VerticalScrollBarVisibility="Auto">
                 <StackPanel>
+                    <TextBlock Text="Controllers" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,6"
+                               Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"/>
+                    <TextBlock x:Name="SettingsControllersEmpty"
+                               Text="No controllers connected."
+                               FontSize="13" Margin="0,0,0,8" Visibility="Collapsed"
+                               Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"/>
+                    <StackPanel x:Name="SettingsControllerList" Margin="0,0,0,8"/>
+                    <TextBlock Text="Player order is the list order (1 = player 1). Editing shared bindings will ask whether to update every pad or only this one."
+                               FontSize="12" TextWrapping="Wrap" Margin="0,0,0,20"
+                               Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"/>
+
                     <TextBlock Text="Bridge" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,6"
                                Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"/>
                     <ToggleSwitch x:Name="BridgeToggle" Header="MistMapper bridge"

@@ -120,6 +120,21 @@ namespace MistMapper.GameBarWidget
         string _activeEditCategory = "Buttons";
         string _controllerModel = ""; // "" when disconnected; "sc1" / "sc2" when connected
         bool _controllerConnected;
+        string _selectedDeviceKey = "";
+        bool _selectedHasProfileOverride;
+        /// <summary>Session choice after the shared-bindings prompt for the selected pad.</summary>
+        string _sharedEditDecisionDeviceKey = "";
+        SharedEditDecision _sharedEditDecision = SharedEditDecision.None;
+
+        enum SharedEditDecision
+        {
+            None,
+            AllControllers,
+            ThisControllerOnly
+        }
+
+        readonly List<ControllerPadInfo> _controllers = new List<ControllerPadInfo>();
+        string _lastControllersKey = "";
         string _lastLayoutKey = "";
         string _lastGameIconToken = "";
         string _lastInputMapKey = "";
@@ -135,6 +150,17 @@ namespace MistMapper.GameBarWidget
         string _previewLayoutId = "";
         readonly List<string> _profileNames = new List<string>();
         bool _sensitivityThrottle;
+
+        sealed class ControllerPadInfo
+        {
+            public string DeviceKey;
+            public string Model;
+            public string DisplayName;
+            public string ProfileId;
+            public int Order;
+            public bool Connected;
+            public bool HasProfileOverride;
+        }
 
         // Sensitivity/deadzone/invert state from host
         readonly Dictionary<string, double> _sensValues = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
@@ -415,6 +441,7 @@ namespace MistMapper.GameBarWidget
 
         void Settings_Click(object sender, RoutedEventArgs e)
         {
+            RebuildSettingsControllerList();
             MainView.Visibility = Visibility.Collapsed;
             SettingsView.Visibility = Visibility.Visible;
         }
@@ -423,6 +450,319 @@ namespace MistMapper.GameBarWidget
         {
             SettingsView.Visibility = Visibility.Collapsed;
             MainView.Visibility = Visibility.Visible;
+        }
+
+        void RebuildSettingsControllerList()
+        {
+            SettingsControllerList.Children.Clear();
+            var ordered = _controllers.OrderBy(c => c.Order).ToList();
+            SettingsControllersEmpty.Visibility = ordered.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+            for (var i = 0; i < ordered.Count; i++)
+            {
+                var pad = ordered[i];
+                var card = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
+
+                var title = new TextBlock
+                {
+                    Text = (i + 1) + ". " + PadLabel(pad),
+                    FontSize = 16,
+                    FontWeight = Windows.UI.Text.FontWeights.SemiBold,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 0, 0, 8)
+                };
+                card.Children.Add(title);
+
+                var modelHint = new TextBlock
+                {
+                    Text = pad.Model == "sc1" ? "Steam Controller" : (pad.Model == "sc2" ? "Steam Controller 2" : "Controller"),
+                    FontSize = 12,
+                    Margin = new Thickness(0, 0, 0, 8),
+                    Foreground = (Windows.UI.Xaml.Media.Brush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"]
+                };
+                card.Children.Add(modelHint);
+
+                // Per-pad bindings only matter with multiple pads.
+                if (ordered.Count > 1)
+                {
+                    var layoutLine = new TextBlock
+                    {
+                        Text = pad.HasProfileOverride
+                            ? "Bindings: custom for this pad only"
+                            : "Bindings: shared with other pads",
+                        FontSize = 13,
+                        Margin = new Thickness(0, 0, 0, 8),
+                        TextWrapping = TextWrapping.Wrap,
+                        Foreground = (Windows.UI.Xaml.Media.Brush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"]
+                    };
+                    card.Children.Add(layoutLine);
+                }
+
+                var actions = new StackPanel { Orientation = Orientation.Horizontal };
+                void AddAction(string label, string tag, RoutedEventHandler handler, bool enabled = true)
+                {
+                    var btn = new Button
+                    {
+                        Content = label,
+                        Tag = tag,
+                        Style = (Style)Application.Current.Resources["PillButtonStyle"],
+                        Padding = new Thickness(14, 10, 14, 10),
+                        Margin = new Thickness(0, 0, 8, 0),
+                        FontSize = 13,
+                        IsEnabled = enabled
+                    };
+                    btn.Click += handler;
+                    actions.Children.Add(btn);
+                }
+
+                AddAction("Identify", pad.DeviceKey, SettingsIdentify_Click);
+                AddAction("Rename", pad.DeviceKey, SettingsRename_Click);
+                if (ordered.Count > 1 && pad.HasProfileOverride)
+                    AddAction("Share with other pads", pad.DeviceKey, SettingsUseSharedBindings_Click);
+                AddAction("Up", pad.DeviceKey, ReorderUp_Click, i > 0);
+                AddAction("Down", pad.DeviceKey, ReorderDown_Click, i < ordered.Count - 1);
+                card.Children.Add(actions);
+
+                SettingsControllerList.Children.Add(card);
+            }
+        }
+
+        static string PadLabel(ControllerPadInfo pad)
+        {
+            if (!string.IsNullOrWhiteSpace(pad.DisplayName))
+                return pad.DisplayName.Trim();
+            return pad.Model == "sc1" ? "Steam Controller" : (pad.Model == "sc2" ? "Steam Controller 2" : "Controller");
+        }
+
+        async void SettingsIdentify_Click(object sender, RoutedEventArgs e)
+        {
+            if (!(sender is Button btn) || !(btn.Tag is string key)) return;
+            StatusText.Text = "Identifying…";
+            var resp = await IpcClient.SendAsync("identifyController", key);
+            StatusText.Text = resp.IsOk ? "Vibrated pad" : (resp.Error ?? "Identify failed");
+        }
+
+        async void SettingsRename_Click(object sender, RoutedEventArgs e)
+        {
+            if (!(sender is Button btn) || !(btn.Tag is string key)) return;
+            var pad = _controllers.FirstOrDefault(c =>
+                string.Equals(c.DeviceKey, key, StringComparison.OrdinalIgnoreCase));
+            var current = pad?.DisplayName ?? "";
+            var name = await PromptTextAsync("Rename controller", "Name for this pad", current);
+            if (name is null) return;
+            var resp = await IpcClient.SendAsync("renameController", key + "\t" + name.Trim());
+            StatusText.Text = resp.IsOk
+                ? (string.IsNullOrWhiteSpace(name) ? "Name cleared" : "Renamed to " + name.Trim())
+                : (resp.Error ?? "Rename failed");
+            await RefreshAsync(force: true);
+            if (SettingsView.Visibility == Visibility.Visible)
+                RebuildSettingsControllerList();
+        }
+
+        async void SettingsUseSharedBindings_Click(object sender, RoutedEventArgs e)
+        {
+            if (!(sender is Button btn) || !(btn.Tag is string key)) return;
+            var resp = await IpcClient.SendAsync("setControllerSlotProfile", key + "\t");
+            StatusText.Text = resp.IsOk
+                ? "This pad uses shared bindings again"
+                : (resp.Error ?? "Could not switch to shared");
+            if (string.Equals(key, _sharedEditDecisionDeviceKey, StringComparison.OrdinalIgnoreCase))
+            {
+                _sharedEditDecision = SharedEditDecision.None;
+                _sharedEditDecisionDeviceKey = "";
+            }
+            await RefreshAsync(force: true);
+            if (SettingsView.Visibility == Visibility.Visible)
+                RebuildSettingsControllerList();
+        }
+
+        /// <summary>
+        /// Before changing bindings used by multiple pads, ask once: update all, or copy for this pad.
+        /// Returns false if the user cancelled.
+        /// </summary>
+        async Task<bool> EnsureSharedBindingsEditAllowedAsync()
+        {
+            if (_controllers.Count <= 1) return true;
+
+            var pad = _controllers.FirstOrDefault(c =>
+                string.Equals(c.DeviceKey, _selectedDeviceKey, StringComparison.OrdinalIgnoreCase));
+            if (pad == null) return true;
+            if (pad.HasProfileOverride) return true;
+
+            if (string.Equals(_sharedEditDecisionDeviceKey, pad.DeviceKey, StringComparison.OrdinalIgnoreCase)
+                && _sharedEditDecision != SharedEditDecision.None)
+            {
+                if (_sharedEditDecision == SharedEditDecision.ThisControllerOnly && !pad.HasProfileOverride)
+                {
+                    if (!await CloneBindingsForSelectedPadAsync())
+                        return false;
+                }
+                return true;
+            }
+
+            var padName = PadLabel(pad);
+            var dialog = new ContentDialog
+            {
+                Title = "Shared bindings",
+                Content = "These bindings are used by every connected controller.\n\n"
+                    + "Apply this change to all of them, or copy the layout so only \""
+                    + padName + "\" is affected?",
+                PrimaryButtonText = "All controllers",
+                SecondaryButtonText = "This controller only",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary
+            };
+
+            var result = await dialog.ShowAsync();
+            if (result == ContentDialogResult.None)
+                return false;
+
+            _sharedEditDecisionDeviceKey = pad.DeviceKey;
+            if (result == ContentDialogResult.Primary)
+            {
+                _sharedEditDecision = SharedEditDecision.AllControllers;
+                return true;
+            }
+
+            _sharedEditDecision = SharedEditDecision.ThisControllerOnly;
+            return await CloneBindingsForSelectedPadAsync();
+        }
+
+        async Task<bool> CloneBindingsForSelectedPadAsync()
+        {
+            if (string.IsNullOrEmpty(_selectedDeviceKey)) return false;
+            var payload = _selectedDeviceKey;
+            if (!string.IsNullOrEmpty(_activeProfileId))
+                payload += "\t" + _activeProfileId;
+            var resp = await IpcClient.SendAsync("makeControllerProfileUnique", payload);
+            if (!resp.IsOk)
+            {
+                StatusText.Text = resp.Error ?? "Could not copy bindings for this pad";
+                _sharedEditDecision = SharedEditDecision.None;
+                _sharedEditDecisionDeviceKey = "";
+                return false;
+            }
+
+            await RefreshAsync(force: true);
+            return true;
+        }
+
+        async void ReorderUp_Click(object sender, RoutedEventArgs e)
+        {
+            if (!(sender is Button btn) || !(btn.Tag is string key)) return;
+            await MoveControllerAsync(key, -1);
+        }
+
+        async void ReorderDown_Click(object sender, RoutedEventArgs e)
+        {
+            if (!(sender is Button btn) || !(btn.Tag is string key)) return;
+            await MoveControllerAsync(key, 1);
+        }
+
+        async Task MoveControllerAsync(string deviceKey, int delta)
+        {
+            var ordered = _controllers.OrderBy(c => c.Order).ToList();
+            var idx = ordered.FindIndex(c => string.Equals(c.DeviceKey, deviceKey, StringComparison.OrdinalIgnoreCase));
+            if (idx < 0) return;
+            var dest = idx + delta;
+            if (dest < 0 || dest >= ordered.Count) return;
+            var tmp = ordered[idx];
+            ordered[idx] = ordered[dest];
+            ordered[dest] = tmp;
+
+            var json = new JsonArray();
+            for (var i = 0; i < ordered.Count; i++)
+            {
+                var o = new JsonObject();
+                o.SetNamedValue("deviceKey", JsonValue.CreateStringValue(ordered[i].DeviceKey));
+                o.SetNamedValue("order", JsonValue.CreateNumberValue(i));
+                o.SetNamedValue("displayName", JsonValue.CreateStringValue(ordered[i].DisplayName ?? ""));
+                o.SetNamedValue("lastModel", JsonValue.CreateStringValue(ordered[i].Model ?? ""));
+                o.SetNamedValue("enabled", JsonValue.CreateBooleanValue(true));
+                json.Add(o);
+            }
+
+            var resp = await IpcClient.SendAsync("setControllerSlotOrder", json.ToString());
+            if (!resp.IsOk)
+                StatusText.Text = resp.Error ?? "Reorder failed";
+            await RefreshAsync(force: true);
+            if (SettingsView.Visibility == Visibility.Visible)
+                RebuildSettingsControllerList();
+        }
+
+        async void ControllerTab_Click(object sender, RoutedEventArgs e)
+        {
+            if (_suppress) return;
+            if (!(sender is Button btn) || !(btn.Tag is string key)) return;
+            if (string.Equals(key, _selectedDeviceKey, StringComparison.OrdinalIgnoreCase)) return;
+            var resp = await IpcClient.SendAsync("setSelectedController", key);
+            if (!resp.IsOk)
+                StatusText.Text = resp.Error ?? "Select failed";
+            else
+            {
+                if (!string.Equals(key, _sharedEditDecisionDeviceKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    _sharedEditDecision = SharedEditDecision.None;
+                    _sharedEditDecisionDeviceKey = "";
+                }
+                await RefreshAsync(force: true);
+            }
+        }
+
+        void RebuildControllerStrips(bool force)
+        {
+            var key = string.Join("|", _controllers
+                .OrderBy(c => c.Order)
+                .Select(c => c.Order + ":" + c.DeviceKey + ":" + c.Model + ":" + (c.DisplayName ?? "") + ":" + (c.Connected ? "1" : "0") + ":" + (c.HasProfileOverride ? "1" : "0")))
+                + "#" + _selectedDeviceKey;
+            if (!force && key == _lastControllersKey) return;
+            _lastControllersKey = key;
+
+            var show = _controllers.Count > 0;
+            ViewControllerStrip.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            EditControllerStrip.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+
+            FillControllerTabs(ViewControllerTabs, compact: true);
+            FillControllerTabs(EditControllerTabs, compact: false);
+            if (SettingsView.Visibility == Visibility.Visible)
+                RebuildSettingsControllerList();
+        }
+
+        void FillControllerTabs(StackPanel panel, bool compact)
+        {
+            panel.Children.Clear();
+            foreach (var pad in _controllers.OrderBy(c => c.Order))
+            {
+                var selected = string.Equals(pad.DeviceKey, _selectedDeviceKey, StringComparison.OrdinalIgnoreCase);
+                var label = (pad.Order + 1) + ". " + ShortPadName(pad);
+                var btn = new Button
+                {
+                    Content = label,
+                    Tag = pad.DeviceKey,
+                    Style = (Style)Application.Current.Resources[selected ? "PillAccentButtonStyle" : "PillButtonStyle"],
+                    Padding = compact ? new Thickness(12, 8, 12, 8) : new Thickness(14, 10, 14, 10),
+                    FontSize = compact ? 12 : 13,
+                    Margin = new Thickness(0, 0, 8, 0)
+                };
+                btn.Click += ControllerTab_Click;
+                panel.Children.Add(btn);
+            }
+        }
+
+        static string ShortPadName(ControllerPadInfo pad)
+        {
+            if (!string.IsNullOrWhiteSpace(pad.DisplayName))
+            {
+                var custom = pad.DisplayName.Trim();
+                // Keep stock model labels short in the strip.
+                if (custom.Equals("Steam Controller 2", StringComparison.OrdinalIgnoreCase))
+                    return "SC2";
+                if (custom.Equals("Steam Controller", StringComparison.OrdinalIgnoreCase))
+                    return pad.Model == "sc1" ? "SC1" : "SC";
+                // Custom names: show up to ~14 chars.
+                return custom.Length <= 14 ? custom : custom.Substring(0, 13) + "…";
+            }
+            return pad.Model == "sc1" ? "SC1" : (pad.Model == "sc2" ? "SC2" : "Pad");
         }
 
         async void SaveAs_Click(object sender, RoutedEventArgs e)
@@ -684,6 +1024,8 @@ namespace MistMapper.GameBarWidget
         {
             if (string.IsNullOrEmpty(_activeProfileId) || string.IsNullOrEmpty(_previewLayoutId))
                 return;
+            if (!await EnsureSharedBindingsEditAllowedAsync())
+                return;
             var resp = await IpcClient.SendAsync("applyLayout", _activeProfileId + "\t" + _previewLayoutId);
             StatusText.Text = resp.IsOk
                 ? "Applied " + (_officialLayouts.FirstOrDefault(l => l.Id == _previewLayoutId).Name ?? _previewLayoutId)
@@ -777,6 +1119,15 @@ namespace MistMapper.GameBarWidget
             _modeValues[tag] = mode;
             if (btn.Content is StackPanel sp && sp.Children.Count > 1 && sp.Children[1] is TextBlock valueLabel)
                 valueLabel.Text = FormatModeLabel(mode);
+
+            if (!await EnsureSharedBindingsEditAllowedAsync())
+            {
+                // Revert local UI if the user cancelled.
+                _modeValues[tag] = current;
+                if (btn.Content is StackPanel sp2 && sp2.Children.Count > 1 && sp2.Children[1] is TextBlock valueLabel2)
+                    valueLabel2.Text = FormatModeLabel(current);
+                return;
+            }
 
             BridgeResponse resp;
             if (tag == "gyro")
@@ -895,6 +1246,8 @@ namespace MistMapper.GameBarWidget
         async Task SendSensitivityAsync()
         {
             if (string.IsNullOrEmpty(_activeProfileId)) return;
+            if (!await EnsureSharedBindingsEditAllowedAsync())
+                return;
             var parts = new List<string> { "\"profileId\":\"" + _activeProfileId + "\"" };
             foreach (var kv in _sensValues)
                 parts.Add("\"" + kv.Key + "\":" + kv.Value.ToString(CultureInfo.InvariantCulture));
@@ -1662,6 +2015,9 @@ namespace MistMapper.GameBarWidget
             if (string.IsNullOrEmpty(_remapInputId) || string.IsNullOrEmpty(_activeProfileId))
                 return;
 
+            if (!await EnsureSharedBindingsEditAllowedAsync())
+                return;
+
             var payload = _activeProfileId + "\t" + _remapInputId + "\t" + kind + "\t" + value + "\t" + mods;
             var resp = await IpcClient.SendAsync("remapAction", payload);
             StatusText.Text = resp.IsOk
@@ -1882,6 +2238,30 @@ namespace MistMapper.GameBarWidget
             }
         }
 
+        void ParseControllers(JsonObject state)
+        {
+            _controllers.Clear();
+            if (!state.ContainsKey("controllers")) return;
+            var arr = state.GetNamedArray("controllers");
+            for (var i = 0; i < arr.Count; i++)
+            {
+                var item = arr.GetObjectAt((uint)i);
+                _controllers.Add(new ControllerPadInfo
+                {
+                    DeviceKey = item.GetNamedString("deviceKey", ""),
+                    Model = item.GetNamedString("model", ""),
+                    DisplayName = item.GetNamedString("displayName", ""),
+                    ProfileId = item.GetNamedString("profileId", ""),
+                    Order = (int)item.GetNamedNumber("order", i),
+                    Connected = item.GetNamedBoolean("connected", true),
+                    HasProfileOverride = item.GetNamedBoolean("hasProfileOverride", false)
+                });
+            }
+
+            if (string.IsNullOrEmpty(_selectedDeviceKey) && _controllers.Count > 0)
+                _selectedDeviceKey = _controllers.OrderBy(c => c.Order).First().DeviceKey;
+        }
+
         void Bind(JsonObject state, bool force)
         {
             _suppress = true;
@@ -1902,6 +2282,17 @@ namespace MistMapper.GameBarWidget
                 var viiperDetail = state.GetNamedString("viiperDetail", "");
                 var padOk = state.GetNamedBoolean("controllerConnected", false);
                 var model = state.GetNamedString("controllerModel", "");
+                _selectedDeviceKey = state.GetNamedString("selectedDeviceKey", "");
+                _selectedHasProfileOverride = state.GetNamedBoolean("selectedHasProfileOverride", false);
+                ParseControllers(state);
+                RebuildControllerStrips(force);
+
+                // Prefer selected pad model for outline when available.
+                var selectedPad = _controllers.FirstOrDefault(c =>
+                    string.Equals(c.DeviceKey, _selectedDeviceKey, StringComparison.OrdinalIgnoreCase));
+                if (selectedPad != null && !string.IsNullOrEmpty(selectedPad.Model))
+                    model = selectedPad.Model;
+
                 var connectedChanged = padOk != _controllerConnected;
                 var modelChanged = !string.Equals(_controllerModel, model, StringComparison.OrdinalIgnoreCase);
                 _controllerConnected = padOk;
