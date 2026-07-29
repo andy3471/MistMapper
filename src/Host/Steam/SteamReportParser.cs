@@ -49,8 +49,11 @@ public static class SteamReportParser
         state.LeftTrackpadTouch = (b3 & 0x02) != 0;
         state.LeftTrackpadClick = (b3 & 0x04) != 0;
 
-        state.LeftTrigger = BinaryPrimitives.ReadInt16LittleEndian(buf[6..]);
-        state.RightTrigger = BinaryPrimitives.ReadInt16LittleEndian(buf[8..]);
+        // Triggers are unsigned (u16). Reading as i16 made full-pull values
+        // (>32767) look negative, which ScaleAnalog then clamped to 0 — half-press
+        // worked, bottoming-out released.
+        state.LeftTrigger = BinaryPrimitives.ReadUInt16LittleEndian(buf[6..]);
+        state.RightTrigger = BinaryPrimitives.ReadUInt16LittleEndian(buf[8..]);
         state.LeftStickX = BinaryPrimitives.ReadInt16LittleEndian(buf[10..]);
         state.LeftStickY = BinaryPrimitives.ReadInt16LittleEndian(buf[12..]);
         state.RightStickX = BinaryPrimitives.ReadInt16LittleEndian(buf[14..]);

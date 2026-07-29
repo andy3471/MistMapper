@@ -48,16 +48,17 @@
                 </Border>
 
                 <!-- VIEW | EDIT tabs -->
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
                     <Button x:Name="TabView" Content="VIEW" Click="ViewEditTab_Click" Tag="View"
                             Margin="0,0,4,0" Padding="16,8" FontSize="13"/>
                     <Button x:Name="TabEdit" Content="EDIT" Click="ViewEditTab_Click" Tag="Edit"
                             Margin="0,0,4,0" Padding="16,8" FontSize="13"/>
                 </StackPanel>
+                <TextBlock Text="LT / RT" FontSize="10" Margin="0,0,0,8"
+                           Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"/>
 
                 <!-- ──── VIEW PANEL ──── -->
                 <StackPanel x:Name="ViewPanel">
-                    <!-- Shown when no controller is connected -->
                     <Border x:Name="NoControllerBanner" Background="#FF1A2A3A" BorderBrush="#FF3D7EA6" BorderThickness="1"
                             Padding="16,20" CornerRadius="6" Margin="0,0,0,8" Visibility="Collapsed">
                         <StackPanel>
@@ -70,7 +71,6 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Controller silhouette with mapping labels -->
                     <Grid x:Name="ControllerLayoutGrid" Margin="0,0,0,8" Height="280">
                         <Image x:Name="ControllerOutlineImage" Source="Assets/controller-outline-sc2.png"
                                Stretch="Uniform" Opacity="0.5"
@@ -86,66 +86,132 @@
 
                 <!-- ──── EDIT PANEL ──── -->
                 <StackPanel x:Name="EditPanel" Visibility="Collapsed">
-                    <!-- Profile selector -->
-                    <Grid Margin="0,0,0,6">
+                    <!-- Compact current-layout strip -->
+                    <Grid Margin="0,0,0,10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="8"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <!-- ContentDialog picker — ComboBox flyouts are unreliable with gamepad in Game Bar -->
-                        <Button x:Name="ProfilesPickerButton" Click="ProfilesPicker_Click"
-                                HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                Padding="12,8" VerticalAlignment="Stretch">
-                            <StackPanel>
-                                <TextBlock Text="Profile" FontSize="11"
-                                           Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"/>
-                                <TextBlock x:Name="ProfilesPickerLabel" Text="—" FontSize="14"
-                                           TextWrapping="NoWrap"/>
-                            </StackPanel>
-                        </Button>
-                        <Button Grid.Column="2" Content="Bind to game" Click="BindGame_Click"
-                                VerticalAlignment="Bottom" Padding="12,6"/>
-                    </Grid>
-
-                    <Grid Margin="0,0,0,8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="6"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="6"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="6"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <Button Grid.Column="0" Content="New…" Click="NewProfile_Click" Padding="6,4"/>
-                        <Button Grid.Column="2" Content="Duplicate" Click="DuplicateProfile_Click" Padding="6,4"/>
-                        <Button Grid.Column="4" Content="Rename" Click="RenameProfile_Click" Padding="6,4"/>
-                        <Button Grid.Column="6" Content="Delete" Click="DeleteProfile_Click" Padding="6,4"/>
-                    </Grid>
-
-                    <Button x:Name="LayoutsPickerButton" Click="LayoutsPicker_Click"
-                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                            Margin="0,0,0,8" Padding="12,8">
-                        <StackPanel>
-                            <TextBlock Text="Official layouts" FontSize="11"
-                                       Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"/>
-                            <TextBlock Text="Create profile from layout\u2026" FontSize="14"/>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock x:Name="CurrentLayoutTitle" Text="—" FontSize="14" FontWeight="SemiBold"
+                                       Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"
+                                       TextTrimming="CharacterEllipsis"/>
+                            <TextBlock x:Name="CurrentLayoutSubtitle" Text="" FontSize="11" Margin="0,1,0,0"
+                                       Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
+                                       TextTrimming="CharacterEllipsis"/>
                         </StackPanel>
-                    </Button>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
+                            <Button Content="Change…" Click="ChangeLayout_Click"
+                                    Padding="10,6" Margin="0,0,4,0" FontSize="12"
+                                    ToolTipService.ToolTip="Load a different layout"/>
+                            <Button Content="Save As…" Click="SaveAs_Click"
+                                    Padding="10,6" Margin="0,0,4,0" FontSize="12"/>
+                            <Button Content="Bind" Click="BindGame_Click"
+                                    Padding="10,6" FontSize="12"
+                                    ToolTipService.ToolTip="Bind this layout to the current game"/>
+                        </StackPanel>
+                    </Grid>
 
                     <!-- Category tabs -->
-                    <StackPanel x:Name="EditCategoryTabs" Orientation="Horizontal" Margin="0,0,0,6"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                        <StackPanel x:Name="EditCategoryTabs" Orientation="Horizontal"/>
+                    </StackPanel>
+                    <TextBlock Text="LB / RB" FontSize="10" Margin="0,0,0,6"
+                               Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"/>
 
-                    <!-- Category content: input cards + category-specific settings -->
                     <StackPanel x:Name="EditCategoryContent" Margin="0,0,0,8"/>
                 </StackPanel>
-
-                <Button Content="Refresh" Click="RefreshButton_Click" HorizontalAlignment="Stretch" Opacity="0.7"/>
             </StackPanel>
         </ScrollViewer>
 
-        <!-- ════════ REMAP VIEW (Steam Input style full-page editor) ════════ -->
+        <!-- ════════ LOAD LAYOUT (browse templates / your layouts) ════════ -->
+        <Grid x:Name="BrowseLayoutView" Visibility="Collapsed" Background="#FF12141A">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <Grid Grid.Row="0" Margin="10,10,10,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Content="&#xE72B;" Click="BrowseLayoutBack_Click"
+                        FontFamily="Segoe MDL2 Assets" FontSize="16"
+                        Padding="10,8" Margin="0,0,10,0" VerticalAlignment="Top"
+                        ToolTipService.ToolTip="Back"/>
+                <StackPanel Grid.Column="1">
+                    <TextBlock Text="Load new layout" FontSize="18" FontWeight="SemiBold"
+                               Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"/>
+                    <TextBlock Text="LB / RB switch sections · A to preview"
+                               FontSize="12" Margin="0,2,0,0"
+                               Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"/>
+                </StackPanel>
+            </Grid>
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="10,4,10,8">
+                <Button x:Name="BrowseTabTemplates" Content="TEMPLATES" Click="BrowseSection_Click" Tag="Templates"
+                        Margin="0,0,4,0" Padding="14,8" FontSize="13"/>
+                <Button x:Name="BrowseTabYours" Content="YOUR LAYOUTS" Click="BrowseSection_Click" Tag="Yours"
+                        Margin="0,0,4,0" Padding="14,8" FontSize="13"/>
+            </StackPanel>
+            <ScrollViewer Grid.Row="2" Padding="10,0,10,10" VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="BrowseLayoutList"/>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- ════════ PREVIEW LAYOUT ════════ -->
+        <Grid x:Name="PreviewLayoutView" Visibility="Collapsed" Background="#FF12141A">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid Grid.Row="0" Margin="10,10,10,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Content="&#xE72B;" Click="PreviewLayoutBack_Click"
+                        FontFamily="Segoe MDL2 Assets" FontSize="16"
+                        Padding="10,8" Margin="0,0,10,0" VerticalAlignment="Top"
+                        ToolTipService.ToolTip="Back"/>
+                <StackPanel Grid.Column="1">
+                    <TextBlock x:Name="PreviewLayoutTitle" FontSize="18" FontWeight="SemiBold"
+                               Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"/>
+                    <TextBlock x:Name="PreviewLayoutSubtitle" FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap"
+                               Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"/>
+                </StackPanel>
+            </Grid>
+            <ScrollViewer Grid.Row="1" Padding="10,0,10,10" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <Grid Margin="0,0,0,8" Height="260">
+                        <Image x:Name="PreviewOutlineImage" Source="Assets/controller-outline-sc2.png"
+                               Stretch="Uniform" Opacity="0.5"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               MaxHeight="240" MaxWidth="420"/>
+                        <StackPanel x:Name="PreviewLeftLabels" HorizontalAlignment="Left" VerticalAlignment="Top"
+                                    Margin="4,8,0,0" Width="140"/>
+                        <StackPanel x:Name="PreviewRightLabels" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                    Margin="0,8,4,0" Width="140"/>
+                    </Grid>
+                    <StackPanel x:Name="PreviewCategorySummaries"/>
+                </StackPanel>
+            </ScrollViewer>
+            <Grid Grid.Row="2" Margin="10,0,10,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Content="B Back" Click="PreviewLayoutBack_Click"
+                        HorizontalAlignment="Stretch" Padding="12,10"/>
+                <Button Grid.Column="2" x:Name="ApplyLayoutButton" Content="A Apply Layout"
+                        Click="ApplyLayout_Click" HorizontalAlignment="Stretch" Padding="12,10"
+                        Style="{StaticResource AccentButtonStyle}"/>
+            </Grid>
+        </Grid>
+
+        <!-- ════════ REMAP VIEW ════════ -->
         <Grid x:Name="RemapView" Visibility="Collapsed" Background="#FF12141A">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>

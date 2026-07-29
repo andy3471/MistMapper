@@ -34,7 +34,7 @@ public static class OfficialLayouts
         {
             Id = MouseJoystick,
             Name = "Mouse Joystick",
-            Description = "FPS-style: left stick move, right pad + gyro look as mouse."
+            Description = "FPS-style: left stick move; right pad + gyro aim like a mouse but output as the right stick (gamespad-only games)."
         },
         new()
         {
@@ -105,15 +105,15 @@ public static class OfficialLayouts
         p.Name = "Mouse Joystick";
         p.LayoutId = MouseJoystick;
         p.IsOfficial = true;
-        p.RightTrackpad = TrackpadMode.AsMouse;
-        p.Gyro = GyroMode.AsMouse;
+        // Relative pad/gyro → virtual right stick (not OS mouse).
+        p.RightTrackpad = TrackpadMode.AsMouseJoystick;
+        p.Gyro = GyroMode.AsMouseJoystick;
         p.GyroSensitivity = 1.2f;
-        p.SetAction("RightTrackpadClick", OutputAction.FromMouse(MouseButtonOutput.Left));
-        p.SetAction("Lt", OutputAction.FromMouse(MouseButtonOutput.Right));
-        p.SetAction("Rt", OutputAction.FromMouse(MouseButtonOutput.Left));
-        p.SetAction("R4", OutputAction.FromKey(0x20)); // Space jump
-        p.SetAction("L4", OutputAction.FromKey(0x11)); // Ctrl crouch — bare Ctrl key via VK
-        // Left stick stays as LeftStick for movement via virtual pad
+        p.TrackpadSensitivityX = 1.2f;
+        p.TrackpadSensitivityY = 1.2f;
+        p.SetAction("RightTrackpadClick", OutputAction.FromXbox(XboxOutput.RsClick));
+        p.SetAction("R4", OutputAction.FromXbox(XboxOutput.A));
+        p.SetAction("L4", OutputAction.FromXbox(XboxOutput.B));
         return p;
     }
 

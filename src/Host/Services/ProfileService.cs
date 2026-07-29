@@ -13,12 +13,14 @@ public sealed class ProfileService
 
     public ProfileService(string? directory = null)
     {
+        var usingDefaultDir = directory is null;
         var dir = directory ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "MistMapper");
         Directory.CreateDirectory(dir);
         _path = Path.Combine(dir, "profiles.json");
-        MigrateLegacyAppDataIfNeeded(dir);
+        if (usingDefaultDir)
+            MigrateLegacyAppDataIfNeeded(dir);
         _doc = LoadOrCreate();
     }
 
@@ -169,6 +171,101 @@ public sealed class ProfileService
         }
     }
 
+    /// <summary>Steam-style Apply: copy an official template onto an existing user profile in-place.</summary>
+    public ControllerProfile ApplyLayout(string profileId, string layoutId)
+    {
+        lock (_lock)
+        {
+            var target = _doc.Profiles.FirstOrDefault(p => p.Id == profileId)
+                         ?? throw new ArgumentException("Unknown profile id");
+            var template = OfficialLayouts.Create(layoutId);
+            CopyLayoutContent(target, template);
+            target.LayoutId = layoutId;
+            target.IsOfficial = false;
+            SaveUnlocked();
+            var result = CloneProfile(target);
+            Changed?.Invoke();
+            return result;
+        }
+    }
+
+    /// <summary>Clone the current layout into a new named user profile and activate it.</summary>
+    public ControllerProfile SaveAsProfile(string sourceProfileId, string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("Name required");
+        lock (_lock)
+        {
+            var src = _doc.Profiles.FirstOrDefault(p => p.Id == sourceProfileId)
+                      ?? throw new ArgumentException("Unknown profile id");
+            var copy = CloneProfile(src);
+            copy.Id = Guid.NewGuid().ToString("N");
+            copy.Name = UniqueName(name.Trim());
+            copy.IsOfficial = false;
+            _doc.Profiles.Add(copy);
+            _doc.ActiveProfileId = copy.Id;
+            SaveUnlocked();
+            var result = CloneProfile(copy);
+            Changed?.Invoke();
+            return result;
+        }
+    }
+
+    /// <summary>Display strings for an official template (preview before apply).</summary>
+    public static Dictionary<string, string> PreviewLayoutMap(string layoutId)
+    {
+        var template = OfficialLayouts.Create(layoutId);
+        template.MigrateLegacyButtonMap();
+        return template.InputMap.ToDictionary(
+            kv => kv.Key,
+            kv => kv.Value.ToDisplayString(),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    public static string LayoutDisplayName(string? layoutId)
+    {
+        if (string.IsNullOrEmpty(layoutId)) return "Custom";
+        var info = OfficialLayouts.All.FirstOrDefault(l =>
+            l.Id.Equals(layoutId, StringComparison.OrdinalIgnoreCase));
+        return info?.Name ?? layoutId;
+    }
+
+    /// <summary>User-editable profiles only (official templates are catalog-only).</summary>
+    public IReadOnlyList<ControllerProfile> GetUserProfiles()
+    {
+        lock (_lock)
+            return _doc.Profiles.Where(p => !p.IsOfficial).Select(CloneProfile).ToList();
+    }
+
+    static void CopyLayoutContent(ControllerProfile target, ControllerProfile template)
+    {
+        template.MigrateLegacyButtonMap();
+        target.InputMap = template.InputMap.ToDictionary(
+            kv => kv.Key,
+            kv => CloneAction(kv.Value),
+            StringComparer.OrdinalIgnoreCase);
+        target.LeftTrackpad = template.LeftTrackpad;
+        target.RightTrackpad = template.RightTrackpad;
+        target.Gyro = template.Gyro;
+        target.GyroSensitivity = template.GyroSensitivity;
+        target.StickDeadzone = template.StickDeadzone;
+        target.TriggerDeadzone = template.TriggerDeadzone;
+        target.TrackpadDeadzone = template.TrackpadDeadzone;
+        target.StickSensitivityX = template.StickSensitivityX;
+        target.StickSensitivityY = template.StickSensitivityY;
+        target.TrackpadSensitivityX = template.TrackpadSensitivityX;
+        target.TrackpadSensitivityY = template.TrackpadSensitivityY;
+        target.GyroSensitivityX = template.GyroSensitivityX;
+        target.GyroSensitivityY = template.GyroSensitivityY;
+        target.InvertStickX = template.InvertStickX;
+        target.InvertStickY = template.InvertStickY;
+        target.InvertTrackpadX = template.InvertTrackpadX;
+        target.InvertTrackpadY = template.InvertTrackpadY;
+        target.InvertGyroX = template.InvertGyroX;
+        target.InvertGyroY = template.InvertGyroY;
+        target.EnsureLockedMappings();
+    }
+
     public ControllerProfile Duplicate(string profileId, string? customName = null)
     {
         lock (_lock)
@@ -204,27 +301,13 @@ public sealed class ProfileService
         Changed?.Invoke();
     }
 
-    /// <summary>Ensures each official layout id exists at least once (does not overwrite user edits).</summary>
+    /// <summary>No longer seeds official templates into the profile store (catalog-only).</summary>
     public void EnsureOfficialLayouts()
     {
         lock (_lock)
         {
-            var existing = new HashSet<string>(
-                _doc.Profiles.Where(p => !string.IsNullOrEmpty(p.LayoutId)).Select(p => p.LayoutId!),
-                StringComparer.OrdinalIgnoreCase);
-
-            bool added = false;
-            foreach (var info in OfficialLayouts.All)
-            {
-                if (existing.Contains(info.Id)) continue;
-                var profile = OfficialLayouts.Create(info.Id);
-                profile.IsOfficial = true;
-                _doc.Profiles.Add(profile);
-                added = true;
-            }
-
-            if (added)
-                SaveUnlocked();
+            NormalizeUserProfilesUnlocked();
+            SaveUnlocked();
         }
         Changed?.Invoke();
     }
@@ -442,7 +525,7 @@ public sealed class ProfileService
                     if (string.IsNullOrEmpty(doc.ActiveProfileId))
                         doc.ActiveProfileId = doc.Profiles[0].Id;
                     _doc = doc;
-                    EnsureOfficialLayoutsUnlocked();
+                    NormalizeUserProfilesUnlocked();
                     SaveUnlocked();
                     return _doc;
                 }
@@ -453,26 +536,26 @@ public sealed class ProfileService
             }
         }
 
-        var defaults = new ProfileStoreDocument();
-        foreach (var info in OfficialLayouts.All)
+        // Single editable working layout; official templates live in OfficialLayouts.All only.
+        var working = OfficialLayouts.CreateGamepad();
+        working.IsOfficial = false;
+        working.Name = "My Layout";
+        var defaults = new ProfileStoreDocument
         {
-            var p = OfficialLayouts.Create(info.Id);
-            p.IsOfficial = true;
-            defaults.Profiles.Add(p);
-        }
-        defaults.ActiveProfileId = defaults.Profiles[0].Id;
+            Profiles = [working],
+            ActiveProfileId = working.Id
+        };
         _doc = defaults;
         SaveUnlocked();
         return defaults;
     }
 
-    void EnsureOfficialLayoutsUnlocked()
+    /// <summary>
+    /// Official templates are catalog-only. Demote/remove IsOfficial rows so Edit only
+    /// sees user layouts.
+    /// </summary>
+    void NormalizeUserProfilesUnlocked()
     {
-        var existing = new HashSet<string>(
-            _doc.Profiles.Where(p => !string.IsNullOrEmpty(p.LayoutId)).Select(p => p.LayoutId!),
-            StringComparer.OrdinalIgnoreCase);
-
-        // Migrate legacy names into layout ids when missing
         foreach (var p in _doc.Profiles)
         {
             if (!string.IsNullOrEmpty(p.LayoutId)) continue;
@@ -483,17 +566,25 @@ public sealed class ProfileService
                 p.LayoutId = OfficialLayouts.Gamepad;
         }
 
-        existing = new HashSet<string>(
-            _doc.Profiles.Where(p => !string.IsNullOrEmpty(p.LayoutId)).Select(p => p.LayoutId!),
-            StringComparer.OrdinalIgnoreCase);
-
-        foreach (var info in OfficialLayouts.All)
+        var userProfiles = _doc.Profiles.Where(p => !p.IsOfficial).ToList();
+        if (userProfiles.Count == 0)
         {
-            if (existing.Contains(info.Id)) continue;
-            var profile = OfficialLayouts.Create(info.Id);
-            profile.IsOfficial = true;
-            _doc.Profiles.Add(profile);
+            // Promote the active (or first) official profile into a user working layout.
+            var active = _doc.Profiles.FirstOrDefault(p => p.Id == _doc.ActiveProfileId)
+                         ?? _doc.Profiles.First();
+            active.IsOfficial = false;
+            if (string.IsNullOrWhiteSpace(active.Name) ||
+                OfficialLayouts.All.Any(l => l.Name.Equals(active.Name, StringComparison.OrdinalIgnoreCase)))
+                active.Name = "My Layout";
+            userProfiles = [active];
         }
+
+        // Drop catalog-only official rows; keep bindings that still point at user profiles.
+        var keepIds = new HashSet<string>(userProfiles.Select(p => p.Id), StringComparer.Ordinal);
+        _doc.Profiles = userProfiles;
+        _doc.ProfileBindings.RemoveAll(b => !keepIds.Contains(b.ProfileId));
+        if (!_doc.Profiles.Any(p => p.Id == _doc.ActiveProfileId))
+            _doc.ActiveProfileId = _doc.Profiles[0].Id;
     }
 
     void SaveUnlocked()

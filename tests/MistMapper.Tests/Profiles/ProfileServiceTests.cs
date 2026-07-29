@@ -80,4 +80,39 @@ public sealed class ProfileServiceTests : IDisposable
         copy.Name.Should().StartWith(src.Name);
         copy.Name.Should().NotBe(src.Name);
     }
+
+    [Fact]
+    public void ApplyLayout_replaces_mappings_in_place()
+    {
+        var before = _service.ActiveProfile;
+        var applied = _service.ApplyLayout(before.Id, OfficialLayouts.Desktop);
+
+        applied.Id.Should().Be(before.Id);
+        applied.Name.Should().Be(before.Name);
+        applied.LayoutId.Should().Be(OfficialLayouts.Desktop);
+        applied.IsOfficial.Should().BeFalse();
+        applied.RightTrackpad.Should().Be(TrackpadMode.AsMouse);
+        _service.GetUserProfiles().Should().ContainSingle(p => p.Id == before.Id);
+    }
+
+    [Fact]
+    public void SaveAsProfile_creates_named_copy_and_activates()
+    {
+        var src = _service.ActiveProfile;
+        var saved = _service.SaveAsProfile(src.Id, "My FPS layout");
+
+        saved.Id.Should().NotBe(src.Id);
+        saved.Name.Should().Be("My FPS layout");
+        saved.IsOfficial.Should().BeFalse();
+        _service.ActiveProfile.Id.Should().Be(saved.Id);
+        _service.GetUserProfiles().Should().HaveCountGreaterThanOrEqualTo(2);
+    }
+
+    [Fact]
+    public void New_store_has_single_user_layout_not_official_catalog()
+    {
+        _service.GetUserProfiles().Should().ContainSingle();
+        _service.GetUserProfiles()[0].IsOfficial.Should().BeFalse();
+        _service.GetProfiles().Should().OnlyContain(p => !p.IsOfficial);
+    }
 }

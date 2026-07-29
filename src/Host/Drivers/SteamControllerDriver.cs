@@ -85,8 +85,8 @@ public sealed class SteamControllerDriver : IControllerDriver
         Dig(PhysicalInput.LeftTrackpad, sc.LeftTrackpadTouch);
         Dig(PhysicalInput.RightTrackpad, sc.RightTrackpadTouch);
 
-        frame.Analogs[PhysicalInput.Lt.ToString()] = sc.LeftTrigger / 32767f;
-        frame.Analogs[PhysicalInput.Rt.ToString()] = sc.RightTrigger / 32767f;
+        frame.Analogs[PhysicalInput.Lt.ToString()] = Math.Clamp(sc.LeftTrigger / 32767f, 0f, 1f);
+        frame.Analogs[PhysicalInput.Rt.ToString()] = Math.Clamp(sc.RightTrigger / 32767f, 0f, 1f);
         frame.Vectors[PhysicalInput.LeftStick.ToString()] = (sc.LeftStickX / 32767f, sc.LeftStickY / 32767f);
         frame.Vectors[PhysicalInput.RightStick.ToString()] = (sc.RightStickX / 32767f, sc.RightStickY / 32767f);
         frame.Vectors[PhysicalInput.LeftTrackpad.ToString()] = (sc.LeftTrackpadX / 32767f, sc.LeftTrackpadY / 32767f);

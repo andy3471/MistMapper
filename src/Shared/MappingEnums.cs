@@ -67,12 +67,16 @@ public enum TrackpadMode
     AsDpad,
     FlickStick,
     ScrollWheel,
-    ButtonPad
+    ButtonPad,
+    /// <summary>Relative pad motion → virtual stick (Steam “Mouse Joystick”).</summary>
+    AsMouseJoystick
 }
 
 public enum GyroMode
 {
     Off,
     AsRightStick,
-    AsMouse
+    AsMouse,
+    /// <summary>Gyro rates → virtual stick (Steam “Mouse Joystick” layer).</summary>
+    AsMouseJoystick
 }

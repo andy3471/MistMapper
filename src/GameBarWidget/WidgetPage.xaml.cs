@@ -8,6 +8,7 @@ using Windows.Data.Json;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Controls.Primitives;
+using Windows.UI.Xaml.Input;
 using Windows.UI.Xaml.Navigation;
 
 namespace MistMapper.GameBarWidget
@@ -22,8 +23,25 @@ namespace MistMapper.GameBarWidget
         };
 
         static readonly string[] MouseOutputs = { "Left", "Right", "Middle", "ScrollUp", "ScrollDown" };
-        static readonly string[] TrackpadModes = { "Off", "AsMouse", "AsLeftStick", "AsRightStick", "AsDpad" };
-        static readonly string[] GyroModes = { "Off", "AsRightStick", "AsMouse" };
+        static readonly string[] TrackpadModes =
+        {
+            "Off", "AsMouse", "AsMouseJoystick", "AsLeftStick", "AsRightStick", "AsDpad", "FlickStick", "ScrollWheel", "ButtonPad"
+        };
+        static readonly string[] GyroModes = { "Off", "AsRightStick", "AsMouse", "AsMouseJoystick" };
+
+        static string FormatModeLabel(string mode) => mode switch
+        {
+            "Off" => "Off",
+            "AsMouse" => "Mouse",
+            "AsMouseJoystick" => "Mouse Joystick",
+            "AsLeftStick" => "Left Stick",
+            "AsRightStick" => "Right Stick",
+            "AsDpad" => "D-Pad",
+            "FlickStick" => "Flick Stick",
+            "ScrollWheel" => "Scroll Wheel",
+            "ButtonPad" => "Button Pad",
+            _ => mode
+        };
 
         static readonly (string Label, int Vk, int Width)[] KeyboardRow1 =
         {
@@ -118,6 +136,10 @@ namespace MistMapper.GameBarWidget
         List<JsonObject> _layout = new List<JsonObject>();
         bool _layoutsReady;
         string _selectedProfileName = "";
+        string _activeLayoutId = "";
+        string _activeLayoutName = "";
+        string _browseSection = "Templates"; // Templates | Yours
+        string _previewLayoutId = "";
         readonly List<string> _profileNames = new List<string>();
         bool _sensitivityThrottle;
 
@@ -146,6 +168,7 @@ namespace MistMapper.GameBarWidget
             _timer.Tick += async (_, __) => await RefreshAsync();
             HighlightViewEditTabs();
             ApplyControllerOutline();
+            PreviewKeyDown += WidgetPage_PreviewKeyDown;
         }
 
         protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -198,6 +221,12 @@ namespace MistMapper.GameBarWidget
         void ViewEditTab_Click(object sender, RoutedEventArgs e)
         {
             if (!(sender is Button btn) || !(btn.Tag is string tab)) return;
+            SetViewEditTab(tab);
+        }
+
+        void SetViewEditTab(string tab)
+        {
+            if (IsOverlayOpen()) return;
             _activeViewTab = tab;
             ViewPanel.Visibility = tab == "View" ? Visibility.Visible : Visibility.Collapsed;
             EditPanel.Visibility = tab == "Edit" ? Visibility.Visible : Visibility.Collapsed;
@@ -206,6 +235,29 @@ namespace MistMapper.GameBarWidget
             if (tab == "Edit")
                 RebuildEditCategoryTabs();
         }
+
+        void CycleViewEditTab(int delta)
+        {
+            if (IsOverlayOpen()) return;
+            SetViewEditTab(_activeViewTab == "View" ? "Edit" : "View");
+        }
+
+        void CycleEditCategory(int delta)
+        {
+            if (IsOverlayOpen() || _activeViewTab != "Edit") return;
+            var names = EditCategories.Select(c => c.Name).ToList();
+            if (names.Count == 0) return;
+            var idx = names.FindIndex(n => n == _activeEditCategory);
+            if (idx < 0) idx = 0;
+            idx = (idx + delta + names.Count) % names.Count;
+            _activeEditCategory = names[idx];
+            RebuildEditCategoryTabs();
+        }
+
+        bool IsOverlayOpen() =>
+            RemapView.Visibility == Visibility.Visible
+            || BrowseLayoutView.Visibility == Visibility.Visible
+            || PreviewLayoutView.Visibility == Visibility.Visible;
 
         void HighlightViewEditTabs()
         {
@@ -235,8 +287,6 @@ namespace MistMapper.GameBarWidget
 
         // ═══════════════ Main view event handlers ═══════════════
 
-        async void RefreshButton_Click(object sender, RoutedEventArgs e) => await RefreshAsync(force: true);
-
         async void BridgeToggle_Toggled(object sender, RoutedEventArgs e)
         {
             if (_suppress) return;
@@ -259,126 +309,361 @@ namespace MistMapper.GameBarWidget
                 await RefreshAsync(force: true);
         }
 
-        async void ProfilesPicker_Click(object sender, RoutedEventArgs e)
-        {
-            if (_profileNames.Count == 0)
-            {
-                StatusText.Text = "No profiles loaded yet.";
-                return;
-            }
-
-            var selected = await PickListIndexAsync("Select profile", _profileNames, _selectedProfileName);
-            if (selected < 0) return;
-
-            var name = _profileNames[selected];
-            if (string.Equals(name, _selectedProfileName, StringComparison.OrdinalIgnoreCase))
-                return;
-
-            var resp = await IpcClient.SendAsync("setActiveProfileByName", name);
-            if (!resp.IsOk)
-                StatusText.Text = resp.Error ?? "Profile switch failed";
-            else
-                await RefreshAsync(force: true);
-        }
-
         async void BindGame_Click(object sender, RoutedEventArgs e)
         {
             var resp = await IpcClient.SendAsync("bindToCurrentGame", "");
-            StatusText.Text = resp.IsOk ? "Bound profile to current game." : (resp.Error ?? "Bind failed");
+            StatusText.Text = resp.IsOk ? "Bound layout to current game." : (resp.Error ?? "Bind failed");
             await RefreshAsync(force: true);
         }
 
-        async void NewProfile_Click(object sender, RoutedEventArgs e)
-        {
-            if (_officialLayouts.Count == 0)
-            {
-                StatusText.Text = "No official layouts available yet.";
-                return;
-            }
-
-            var layoutLabels = _officialLayouts
-                .Select(l => l.Name + " \u2014 " + l.Description)
-                .ToList();
-            var layoutIdx = await PickListIndexAsync("Choose layout", layoutLabels, layoutLabels[0]);
-            if (layoutIdx < 0) return;
-
-            var name = await PromptTextAsync("New profile", "Profile name (optional)", "");
-            if (name == null) return; // cancelled
-            name = name.Trim();
-
-            var layoutId = _officialLayouts[layoutIdx].Id;
-            var payload = string.IsNullOrEmpty(name) ? layoutId : layoutId + "\t" + name;
-            var resp = await IpcClient.SendAsync("createFromLayout", payload);
-            StatusText.Text = resp.IsOk ? "Created profile from " + _officialLayouts[layoutIdx].Name
-                                        : (resp.Error ?? "Create failed");
-            await RefreshAsync(force: true);
-        }
-
-        async void DuplicateProfile_Click(object sender, RoutedEventArgs e)
+        async void SaveAs_Click(object sender, RoutedEventArgs e)
         {
             if (string.IsNullOrEmpty(_activeProfileId)) return;
-            var name = await PromptTextAsync("Duplicate profile", "Name for the copy", _selectedProfileName + " copy");
-            if (name == null) return;
-            var payload = _activeProfileId + (string.IsNullOrWhiteSpace(name) ? "" : "\t" + name.Trim());
-            var resp = await IpcClient.SendAsync("duplicateProfile", payload);
-            StatusText.Text = resp.IsOk ? "Duplicated profile." : (resp.Error ?? "Duplicate failed");
-            await RefreshAsync(force: true);
-        }
-
-        async void RenameProfile_Click(object sender, RoutedEventArgs e)
-        {
-            if (string.IsNullOrEmpty(_activeProfileId)) return;
-            var name = await PromptTextAsync("Rename profile", "New name", _selectedProfileName);
+            var name = await PromptTextAsync("Save As", "Name for this layout", _selectedProfileName);
             if (string.IsNullOrWhiteSpace(name)) return;
-            var resp = await IpcClient.SendAsync("renameProfile", _activeProfileId + "\t" + name.Trim());
-            StatusText.Text = resp.IsOk ? "Renamed." : (resp.Error ?? "Rename failed");
+            var resp = await IpcClient.SendAsync("saveAsProfile", _activeProfileId + "\t" + name.Trim());
+            StatusText.Text = resp.IsOk ? "Saved as " + name.Trim() : (resp.Error ?? "Save As failed");
             await RefreshAsync(force: true);
         }
 
-        async void DeleteProfile_Click(object sender, RoutedEventArgs e)
+        void ChangeLayout_Click(object sender, RoutedEventArgs e)
         {
-            if (string.IsNullOrEmpty(_activeProfileId)) return;
-            var name = string.IsNullOrEmpty(_selectedProfileName) ? "this profile" : _selectedProfileName;
-            var dialog = new ContentDialog
-            {
-                Title = "Delete profile?",
-                Content = "Delete \"" + name + "\"? This cannot be undone.",
-                PrimaryButtonText = "Delete",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Close
-            };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-            var resp = await IpcClient.SendAsync("deleteProfile", _activeProfileId);
-            StatusText.Text = resp.IsOk ? "Deleted." : (resp.Error ?? "Delete failed");
-            await RefreshAsync(force: true);
+            _browseSection = "Templates";
+            MainView.Visibility = Visibility.Collapsed;
+            BrowseLayoutView.Visibility = Visibility.Visible;
+            RebuildBrowseLayoutList();
+            HighlightBrowseTabs();
         }
 
-        async void LayoutsPicker_Click(object sender, RoutedEventArgs e)
+        void BrowseLayoutBack_Click(object sender, RoutedEventArgs e)
         {
-            if (_officialLayouts.Count == 0)
+            BrowseLayoutView.Visibility = Visibility.Collapsed;
+            MainView.Visibility = Visibility.Visible;
+        }
+
+        void BrowseSection_Click(object sender, RoutedEventArgs e)
+        {
+            if (!(sender is Button btn) || !(btn.Tag is string section)) return;
+            _browseSection = section;
+            RebuildBrowseLayoutList();
+            HighlightBrowseTabs();
+        }
+
+        void CycleBrowseSection(int delta)
+        {
+            if (BrowseLayoutView.Visibility != Visibility.Visible) return;
+            _browseSection = _browseSection == "Templates" ? "Yours" : "Templates";
+            RebuildBrowseLayoutList();
+            HighlightBrowseTabs();
+        }
+
+        void HighlightBrowseTabs()
+        {
+            SetTabActive(BrowseTabTemplates, _browseSection == "Templates");
+            SetTabActive(BrowseTabYours, _browseSection == "Yours");
+        }
+
+        void RebuildBrowseLayoutList()
+        {
+            BrowseLayoutList.Children.Clear();
+            if (_browseSection == "Templates")
             {
-                StatusText.Text = "No official layouts available yet.";
+                BrowseLayoutList.Children.Add(new TextBlock
+                {
+                    Text = "Templates",
+                    FontSize = 14,
+                    FontWeight = Windows.UI.Text.FontWeights.SemiBold,
+                    Margin = new Thickness(0, 0, 0, 4)
+                });
+                BrowseLayoutList.Children.Add(new TextBlock
+                {
+                    Text = "Official layouts — preview, then Apply to your current layout.",
+                    FontSize = 12,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 0, 0, 8),
+                    Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"]
+                });
+
+                foreach (var layout in _officialLayouts)
+                {
+                    var btn = new Button
+                    {
+                        Tag = layout.Id,
+                        HorizontalAlignment = HorizontalAlignment.Stretch,
+                        HorizontalContentAlignment = HorizontalAlignment.Left,
+                        Padding = new Thickness(12, 10, 12, 10),
+                        Margin = new Thickness(0, 0, 0, 6)
+                    };
+                    var panel = new StackPanel();
+                    panel.Children.Add(new TextBlock { Text = layout.Name, FontSize = 15, FontWeight = Windows.UI.Text.FontWeights.SemiBold });
+                    panel.Children.Add(new TextBlock
+                    {
+                        Text = layout.Description,
+                        FontSize = 12,
+                        TextWrapping = TextWrapping.Wrap,
+                        Margin = new Thickness(0, 4, 0, 0),
+                        Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"]
+                    });
+                    btn.Content = panel;
+                    btn.Click += async (s, _) =>
+                    {
+                        if (s is Button b && b.Tag is string id)
+                            await OpenPreviewLayoutAsync(id);
+                    };
+                    BrowseLayoutList.Children.Add(btn);
+                }
+            }
+            else
+            {
+                BrowseLayoutList.Children.Add(new TextBlock
+                {
+                    Text = "Your layouts",
+                    FontSize = 14,
+                    FontWeight = Windows.UI.Text.FontWeights.SemiBold,
+                    Margin = new Thickness(0, 0, 0, 4)
+                });
+                BrowseLayoutList.Children.Add(new TextBlock
+                {
+                    Text = "Saved layouts — select to switch immediately.",
+                    FontSize = 12,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 0, 0, 8),
+                    Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"]
+                });
+
+                if (_profileNames.Count == 0)
+                {
+                    BrowseLayoutList.Children.Add(new TextBlock
+                    {
+                        Text = "No saved layouts yet. Apply a template, then Save As…",
+                        FontSize = 12,
+                        TextWrapping = TextWrapping.Wrap
+                    });
+                    return;
+                }
+
+                foreach (var name in _profileNames)
+                {
+                    var btn = new Button
+                    {
+                        Content = name,
+                        Tag = name,
+                        HorizontalAlignment = HorizontalAlignment.Stretch,
+                        HorizontalContentAlignment = HorizontalAlignment.Left,
+                        Padding = new Thickness(12, 10, 12, 10),
+                        Margin = new Thickness(0, 0, 0, 6)
+                    };
+                    if (string.Equals(name, _selectedProfileName, StringComparison.OrdinalIgnoreCase))
+                        btn.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
+                    btn.Click += async (s, _) =>
+                    {
+                        if (!(s is Button b) || !(b.Tag is string profileName)) return;
+                        var resp = await IpcClient.SendAsync("setActiveProfileByName", profileName);
+                        StatusText.Text = resp.IsOk ? "Switched to " + profileName : (resp.Error ?? "Switch failed");
+                        BrowseLayoutView.Visibility = Visibility.Collapsed;
+                        MainView.Visibility = Visibility.Visible;
+                        await RefreshAsync(force: true);
+                    };
+                    BrowseLayoutList.Children.Add(btn);
+                }
+            }
+        }
+
+        async Task OpenPreviewLayoutAsync(string layoutId)
+        {
+            var layout = _officialLayouts.FirstOrDefault(l => l.Id == layoutId);
+            if (layout.Id == null)
+            {
+                StatusText.Text = "Unknown layout";
                 return;
             }
 
-            var labels = _officialLayouts.Select(l => l.Name).ToList();
-            var idx = await PickListIndexAsync("Official layout", labels, labels[0]);
-            if (idx < 0) return;
-
-            var layout = _officialLayouts[idx];
-            var confirm = new ContentDialog
+            var resp = await IpcClient.SendAsync("previewLayout", layoutId);
+            if (!resp.IsOk || string.IsNullOrWhiteSpace(resp.Payload))
             {
-                Title = "Create from " + layout.Name + "?",
-                Content = layout.Description + "\n\nCreates a new editable profile based on this official layout.",
-                PrimaryButtonText = "Create",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Primary
-            };
-            if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+                StatusText.Text = resp.Error ?? "Preview failed";
+                return;
+            }
 
-            var resp = await IpcClient.SendAsync("createFromLayout", layout.Id);
-            StatusText.Text = resp.IsOk ? "Created " + layout.Name + " profile." : (resp.Error ?? "Create failed");
+            if (!JsonObject.TryParse(resp.Payload, out var preview) || preview == null)
+            {
+                StatusText.Text = "Invalid preview payload";
+                return;
+            }
+
+            _previewLayoutId = layoutId;
+            PreviewLayoutTitle.Text = layout.Name;
+            PreviewLayoutSubtitle.Text = layout.Description;
+
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (preview.ContainsKey("inputMap"))
+            {
+                var obj = preview.GetNamedObject("inputMap");
+                foreach (var key in obj.Keys)
+                    map[key] = obj.GetNamedString(key);
+            }
+
+            BuildPreviewLabels(map);
+            BrowseLayoutView.Visibility = Visibility.Collapsed;
+            PreviewLayoutView.Visibility = Visibility.Visible;
+        }
+
+        void BuildPreviewLabels(Dictionary<string, string> map)
+        {
+            PreviewLeftLabels.Children.Clear();
+            PreviewRightLabels.Children.Clear();
+            PreviewCategorySummaries.Children.Clear();
+
+            void Add(StackPanel panel, string id, string display)
+            {
+                var mapped = map.ContainsKey(id) ? map[id] : "None";
+                var text = string.IsNullOrEmpty(mapped) || mapped == "None"
+                    ? display
+                    : display + " \u2192 " + mapped;
+                panel.Children.Add(new TextBlock
+                {
+                    Text = text,
+                    FontSize = 11,
+                    Margin = new Thickness(0, 0, 0, 2),
+                    TextWrapping = TextWrapping.Wrap
+                });
+            }
+
+            if (_controllerModel == "sc1")
+            {
+                Add(PreviewLeftLabels, "Lb", "LB");
+                Add(PreviewLeftLabels, "Lt", "LT");
+                Add(PreviewLeftLabels, "L4", "L4");
+                Add(PreviewLeftLabels, "L5", "L5");
+                Add(PreviewLeftLabels, "View", "Select");
+                Add(PreviewRightLabels, "Rb", "RB");
+                Add(PreviewRightLabels, "Rt", "RT");
+                Add(PreviewRightLabels, "R4", "R4");
+                Add(PreviewRightLabels, "R5", "R5");
+                Add(PreviewRightLabels, "Menu", "Start");
+                Add(PreviewRightLabels, "A", "A");
+                Add(PreviewRightLabels, "B", "B");
+                Add(PreviewRightLabels, "X", "X");
+                Add(PreviewRightLabels, "Y", "Y");
+            }
+            else
+            {
+                Add(PreviewLeftLabels, "Lb", "LB");
+                Add(PreviewLeftLabels, "Lt", "LT");
+                Add(PreviewLeftLabels, "L4", "L4");
+                Add(PreviewLeftLabels, "L5", "L5");
+                Add(PreviewLeftLabels, "View", "Select");
+                Add(PreviewRightLabels, "Rb", "RB");
+                Add(PreviewRightLabels, "Rt", "RT");
+                Add(PreviewRightLabels, "R4", "R4");
+                Add(PreviewRightLabels, "R5", "R5");
+                Add(PreviewRightLabels, "Menu", "Start");
+                Add(PreviewRightLabels, "A", "A");
+                Add(PreviewRightLabels, "B", "B");
+                Add(PreviewRightLabels, "X", "X");
+                Add(PreviewRightLabels, "Y", "Y");
+            }
+
+            foreach (var (category, inputIds) in LayoutCategories)
+            {
+                PreviewCategorySummaries.Children.Add(new TextBlock
+                {
+                    Text = category.ToUpperInvariant(),
+                    FontSize = 11,
+                    FontWeight = Windows.UI.Text.FontWeights.SemiBold,
+                    Margin = new Thickness(0, 6, 0, 2),
+                    Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"]
+                });
+                var wrap = new StackPanel { Orientation = Orientation.Horizontal };
+                foreach (var id in inputIds)
+                {
+                    var mapped = map.ContainsKey(id) ? map[id] : "None";
+                    wrap.Children.Add(new Border
+                    {
+                        Margin = new Thickness(0, 0, 4, 2),
+                        Padding = new Thickness(8, 4, 8, 4),
+                        Child = new TextBlock { Text = GetInputLabel(id) + ": " + mapped, FontSize = 11 }
+                    });
+                }
+                PreviewCategorySummaries.Children.Add(wrap);
+            }
+        }
+
+        void PreviewLayoutBack_Click(object sender, RoutedEventArgs e)
+        {
+            PreviewLayoutView.Visibility = Visibility.Collapsed;
+            BrowseLayoutView.Visibility = Visibility.Visible;
+        }
+
+        async void ApplyLayout_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrEmpty(_activeProfileId) || string.IsNullOrEmpty(_previewLayoutId))
+                return;
+            var resp = await IpcClient.SendAsync("applyLayout", _activeProfileId + "\t" + _previewLayoutId);
+            StatusText.Text = resp.IsOk
+                ? "Applied " + (_officialLayouts.FirstOrDefault(l => l.Id == _previewLayoutId).Name ?? _previewLayoutId)
+                : (resp.Error ?? "Apply failed");
+            PreviewLayoutView.Visibility = Visibility.Collapsed;
+            BrowseLayoutView.Visibility = Visibility.Collapsed;
+            MainView.Visibility = Visibility.Visible;
+            SetViewEditTab("Edit");
             await RefreshAsync(force: true);
+        }
+
+        void WidgetPage_PreviewKeyDown(object sender, Windows.UI.Xaml.Input.KeyRoutedEventArgs e)
+        {
+            // Don't steal keys while typing in a dialog text box
+            if (FocusManager.GetFocusedElement() is TextBox)
+                return;
+
+            var key = e.Key;
+            if (RemapView.Visibility == Visibility.Visible)
+            {
+                if (key == Windows.System.VirtualKey.GamepadB || key == Windows.System.VirtualKey.Escape)
+                {
+                    RemapCancel_Click(this, new RoutedEventArgs());
+                    e.Handled = true;
+                }
+                return;
+            }
+
+            if (PreviewLayoutView.Visibility == Visibility.Visible)
+            {
+                if (key == Windows.System.VirtualKey.GamepadA || key == Windows.System.VirtualKey.Enter)
+                {
+                    ApplyLayout_Click(this, new RoutedEventArgs());
+                    e.Handled = true;
+                }
+                else if (key == Windows.System.VirtualKey.GamepadB || key == Windows.System.VirtualKey.Escape)
+                {
+                    PreviewLayoutBack_Click(this, new RoutedEventArgs());
+                    e.Handled = true;
+                }
+                return;
+            }
+
+            if (BrowseLayoutView.Visibility == Visibility.Visible)
+            {
+                if (key == Windows.System.VirtualKey.GamepadLeftShoulder)
+                { CycleBrowseSection(-1); e.Handled = true; }
+                else if (key == Windows.System.VirtualKey.GamepadRightShoulder)
+                { CycleBrowseSection(1); e.Handled = true; }
+                else if (key == Windows.System.VirtualKey.GamepadB || key == Windows.System.VirtualKey.Escape)
+                {
+                    BrowseLayoutBack_Click(this, new RoutedEventArgs());
+                    e.Handled = true;
+                }
+                return;
+            }
+
+            if (key == Windows.System.VirtualKey.GamepadLeftTrigger)
+            { CycleViewEditTab(-1); e.Handled = true; }
+            else if (key == Windows.System.VirtualKey.GamepadRightTrigger)
+            { CycleViewEditTab(1); e.Handled = true; }
+            else if (key == Windows.System.VirtualKey.GamepadLeftShoulder)
+            { CycleEditCategory(-1); e.Handled = true; }
+            else if (key == Windows.System.VirtualKey.GamepadRightShoulder)
+            { CycleEditCategory(1); e.Handled = true; }
         }
 
         async void ModePicker_Click(object sender, RoutedEventArgs e)
@@ -387,9 +672,10 @@ namespace MistMapper.GameBarWidget
             if (!(sender is Button btn) || !(btn.Tag is string tag)) return;
 
             var modes = tag == "gyro" ? GyroModes : TrackpadModes;
+            var labels = modes.Select(FormatModeLabel).ToArray();
             var current = _modeValues.ContainsKey(tag) ? _modeValues[tag] : "Off";
             var title = tag == "gyro" ? "Gyro mode" : (tag == "left" ? "Left pad mode" : "Right pad mode");
-            var selected = await PickListIndexAsync(title, modes, current);
+            var selected = await PickListIndexAsync(title, labels, FormatModeLabel(current));
             if (selected < 0) return;
 
             var mode = modes[selected];
@@ -398,7 +684,7 @@ namespace MistMapper.GameBarWidget
 
             _modeValues[tag] = mode;
             if (btn.Content is StackPanel sp && sp.Children.Count > 1 && sp.Children[1] is TextBlock valueLabel)
-                valueLabel.Text = mode;
+                valueLabel.Text = FormatModeLabel(mode);
 
             BridgeResponse resp;
             if (tag == "gyro")
@@ -579,7 +865,7 @@ namespace MistMapper.GameBarWidget
                         FontSize = 11,
                         Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"]
                     });
-                    panel.Children.Add(new TextBlock { Text = current, FontSize = 14 });
+                    panel.Children.Add(new TextBlock { Text = FormatModeLabel(current), FontSize = 14 });
                     btn.Content = panel;
                     btn.Click += ModePicker_Click;
                     EditCategoryContent.Children.Add(btn);
@@ -1425,7 +1711,7 @@ namespace MistMapper.GameBarWidget
                 var gameBarOverride = state.GetNamedBoolean("gameBarOverrideActive", false);
                 OverrideBanner.Visibility = gameBarOverride ? Visibility.Visible : Visibility.Collapsed;
 
-                // Profile / layout pickers (ContentDialog-based — gamepad friendly)
+                // User layouts + official template catalog
                 if (state.ContainsKey("profiles"))
                 {
                     _profileNames.Clear();
@@ -1433,7 +1719,12 @@ namespace MistMapper.GameBarWidget
                         _profileNames.Add(item.GetObject().GetNamedString("name"));
                 }
                 _selectedProfileName = activeName ?? "";
-                ProfilesPickerLabel.Text = string.IsNullOrEmpty(_selectedProfileName) ? "—" : _selectedProfileName;
+                _activeLayoutId = state.GetNamedString("activeLayoutId", "");
+                _activeLayoutName = state.GetNamedString("activeLayoutName", "Custom");
+                CurrentLayoutTitle.Text = string.IsNullOrEmpty(_selectedProfileName) ? "—" : _selectedProfileName;
+                CurrentLayoutSubtitle.Text = string.IsNullOrEmpty(_activeLayoutName)
+                    ? "Custom mappings"
+                    : "Based on " + _activeLayoutName;
 
                 if (state.ContainsKey("officialLayouts"))
                 {

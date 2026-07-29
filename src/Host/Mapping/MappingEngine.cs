@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using MistMapper.Host.Viiper;
 using MistMapper.Shared;
 
@@ -8,10 +9,22 @@ public sealed class MappingEngine
     /// <summary>Pixels of cursor travel for a full-pad finger swipe (normalized Δ≈2).</summary>
     const float TrackpadMouseSensitivity = 900f;
 
+    /// <summary>Pad Δ≈0.2 at gain 5 → full stick tip (Steam-like mouse→stick).</summary>
+    const float MouseJoystickPadGain = 5f;
+
+    /// <summary>How strongly normalized gyro rates push the virtual stick tip.</summary>
+    const float MouseJoystickGyroGain = 2.2f;
+
+    /// <summary>Exponential return-to-center rate (per second) when motion stops.</summary>
+    const float MouseJoystickFrictionPerSec = 10f;
+
     readonly IKeyboardSink _keyboard;
     readonly IMouseSink _mouse;
     double _mouseAccumX;
     double _mouseAccumY;
+    float _mouseJoyX;
+    float _mouseJoyY;
+    long _mouseJoyLastTick;
     readonly Dictionary<string, (float X, float Y)> _padMouseLast = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> _heldKeys = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> _heldMouse = new(StringComparer.OrdinalIgnoreCase);
@@ -28,6 +41,11 @@ public sealed class MappingEngine
         uint buttons = 0;
         var desiredKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var desiredMouse = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var mouseJoyActive = UsesMouseJoystick(profile);
+        if (mouseJoyActive)
+            DecayMouseJoystick();
+        else
+            ResetMouseJoystick();
 
         void ApplyDigital(string inputId, bool pressed)
         {
@@ -76,11 +94,59 @@ public sealed class MappingEngine
         if (profile.Gyro != GyroMode.Off && frame.TryGetVector("Gyro", out var gx, out var gy))
             ApplyGyro(profile, gx, gy, ref outState);
 
+        if (mouseJoyActive)
+            WriteMouseJoystick(ref outState);
+
         SyncKeys(desiredKeys);
         SyncMouse(desiredMouse);
 
         outState.Buttons = buttons;
         return outState;
+    }
+
+    static bool UsesMouseJoystick(ControllerProfile profile) =>
+        profile.LeftTrackpad == TrackpadMode.AsMouseJoystick
+        || profile.RightTrackpad == TrackpadMode.AsMouseJoystick
+        || profile.Gyro == GyroMode.AsMouseJoystick;
+
+    void DecayMouseJoystick()
+    {
+        long now = Stopwatch.GetTimestamp();
+        if (_mouseJoyLastTick != 0)
+        {
+            float dt = (float)(now - _mouseJoyLastTick) / Stopwatch.Frequency;
+            if (dt > 0f && dt < 0.25f)
+            {
+                float decay = MathF.Exp(-MouseJoystickFrictionPerSec * dt);
+                _mouseJoyX *= decay;
+                _mouseJoyY *= decay;
+            }
+        }
+
+        _mouseJoyLastTick = now;
+        if (Math.Abs(_mouseJoyX) < 0.01f) _mouseJoyX = 0f;
+        if (Math.Abs(_mouseJoyY) < 0.01f) _mouseJoyY = 0f;
+    }
+
+    void AddMouseJoystick(float dx, float dy)
+    {
+        _mouseJoyX = Math.Clamp(_mouseJoyX + dx, -1f, 1f);
+        _mouseJoyY = Math.Clamp(_mouseJoyY + dy, -1f, 1f);
+    }
+
+    void WriteMouseJoystick(ref Xbox360InputState state)
+    {
+        short x = ClampToShort(_mouseJoyX * 32767f);
+        short y = ClampToShort(_mouseJoyY * 32767f);
+        state.ThumbRX = (short)Math.Clamp(state.ThumbRX + x, short.MinValue, short.MaxValue);
+        state.ThumbRY = (short)Math.Clamp(state.ThumbRY + y, short.MinValue, short.MaxValue);
+    }
+
+    void ResetMouseJoystick()
+    {
+        _mouseJoyX = 0f;
+        _mouseJoyY = 0f;
+        _mouseJoyLastTick = 0;
     }
 
     static void ApplyAction(
@@ -213,6 +279,18 @@ public sealed class MappingEngine
                 _mouseAccumX += (nx - last.X) * TrackpadMouseSensitivity * sensX * (invX ? -1 : 1);
                 _mouseAccumY += -(ny - last.Y) * TrackpadMouseSensitivity * sensY * (invY ? -1 : 1);
                 break;
+            case TrackpadMode.AsMouseJoystick:
+                if (!_padMouseLast.TryGetValue(id, out var mjLast))
+                {
+                    _padMouseLast[id] = (nx, ny);
+                    break;
+                }
+                _padMouseLast[id] = (nx, ny);
+                // Relative finger motion → virtual right-stick tip (not OS mouse).
+                AddMouseJoystick(
+                    (nx - mjLast.X) * MouseJoystickPadGain * sensX * (invX ? -1 : 1),
+                    (ny - mjLast.Y) * MouseJoystickPadGain * sensY * (invY ? -1 : 1));
+                break;
             case TrackpadMode.FlickStick:
                 if (Math.Abs(ax) > 0.5f || Math.Abs(ay) > 0.5f)
                 {
@@ -256,6 +334,12 @@ public sealed class MappingEngine
             _mouseAccumX += gx / 2000.0;
             _mouseAccumY += -gy / 2000.0;
         }
+        else if (profile.Gyro == GyroMode.AsMouseJoystick)
+        {
+            AddMouseJoystick(
+                ngy * MouseJoystickGyroGain * sx * (profile.InvertGyroX ? -1 : 1),
+                -ngx * MouseJoystickGyroGain * sy * (profile.InvertGyroY ? -1 : 1));
+        }
     }
 
     public bool TryConsumeMouseDelta(out int dx, out int dy)
@@ -270,6 +354,8 @@ public sealed class MappingEngine
 
     public void ReleaseAllInjected()
     {
+        ResetMouseJoystick();
+        _padMouseLast.Clear();
         foreach (var token in _heldKeys.ToList())
             ReleaseKeyToken(token);
         _heldKeys.Clear();

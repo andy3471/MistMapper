@@ -29,6 +29,16 @@ public sealed class OfficialLayoutsTests
     }
 
     [Fact]
+    public void CreateMouseJoystick_uses_mouse_joystick_modes()
+    {
+        var profile = OfficialLayouts.CreateMouseJoystick();
+
+        profile.RightTrackpad.Should().Be(TrackpadMode.AsMouseJoystick);
+        profile.Gyro.Should().Be(GyroMode.AsMouseJoystick);
+        profile.GetAction("RightTrackpadClick").Xbox.Should().Be(XboxOutput.RsClick);
+    }
+
+    [Fact]
     public void CreateRacing_maps_paddles_to_shoulder_buttons()
     {
         var profile = OfficialLayouts.CreateRacing();

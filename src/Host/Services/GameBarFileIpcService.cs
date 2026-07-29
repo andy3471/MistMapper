@@ -116,9 +116,8 @@ public sealed class GameBarFileIpcService : IDisposable
         string responsePayload;
         try
         {
-            Dispatch(command, payload);
+            responsePayload = Dispatch(command, payload) ?? "";
             status = "OK";
-            responsePayload = "";
         }
         catch (Exception ex)
         {
@@ -133,26 +132,26 @@ public sealed class GameBarFileIpcService : IDisposable
         WriteState();
     }
 
-    void Dispatch(string command, string payload)
+    string? Dispatch(string command, string payload)
     {
         switch (command)
         {
             case "setBridgeEnabled":
                 _bridge.SetEnabled(payload.Equals("true", StringComparison.OrdinalIgnoreCase) || payload == "1");
-                break;
+                return null;
 
             case "setAutoPauseWhenSteam":
                 _profiles.AutoPauseWhenSteamRunning =
                     payload.Equals("true", StringComparison.OrdinalIgnoreCase) || payload == "1";
-                break;
+                return null;
 
             case "setActiveProfileByName":
             {
-                var profile = _profiles.GetProfiles()
+                var profile = _profiles.GetUserProfiles()
                     .FirstOrDefault(p => p.Name.Equals(payload, StringComparison.OrdinalIgnoreCase))
                     ?? throw new InvalidOperationException("Unknown profile");
                 _bridge.SetActiveProfileManual(profile.Id);
-                break;
+                return null;
             }
 
             case "remapButton":
@@ -167,7 +166,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 if (!Enum.TryParse<XboxOutput>(bits[2], true, out var xbox))
                     throw new ArgumentException("Invalid xbox");
                 _profiles.Remap(bits[0], phys, xbox);
-                break;
+                return null;
             }
 
             case "remapAction":
@@ -181,12 +180,12 @@ public sealed class GameBarFileIpcService : IDisposable
                     throw new InvalidOperationException("Steam/Guide is locked to Xbox Guide.");
                 var action = ParseAction(bits);
                 _profiles.RemapAction(bits[0], bits[1], action);
-                break;
+                return null;
             }
 
             case "bindToCurrentGame":
                 _bridge.BindActiveProfileToCurrentGame();
-                break;
+                return null;
 
             case "setTrackpadMode":
             {
@@ -196,7 +195,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 if (!Enum.TryParse<TrackpadMode>(bits[2], true, out var mode))
                     throw new ArgumentException("Invalid trackpad mode");
                 _profiles.SetTrackpad(bits[0], bits[1].Equals("left", StringComparison.OrdinalIgnoreCase), mode);
-                break;
+                return null;
             }
 
             case "setGyroMode":
@@ -207,7 +206,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 if (!Enum.TryParse<GyroMode>(bits[1], true, out var mode))
                     throw new ArgumentException("Invalid gyro mode");
                 _profiles.SetGyro(bits[0], mode);
-                break;
+                return null;
             }
 
             case "createFromLayout":
@@ -218,7 +217,49 @@ public sealed class GameBarFileIpcService : IDisposable
                     throw new ArgumentException("layoutId required");
                 var created = _profiles.CreateFromLayout(bits[0], bits.Length > 1 ? bits[1] : null);
                 _bridge.SetActiveProfileManual(created.Id);
-                break;
+                return null;
+            }
+
+            case "applyLayout":
+            {
+                // profileId \t layoutId
+                var bits = payload.Split('\t');
+                if (bits.Length < 2)
+                    throw new ArgumentException("profileId and layoutId required");
+                _profiles.ApplyLayout(bits[0], bits[1]);
+                return null;
+            }
+
+            case "saveAsProfile":
+            {
+                // profileId \t name
+                var bits = payload.Split('\t');
+                if (bits.Length < 2 || string.IsNullOrWhiteSpace(bits[1]))
+                    throw new ArgumentException("profileId and name required");
+                var created = _profiles.SaveAsProfile(bits[0], bits[1]);
+                _bridge.SetActiveProfileManual(created.Id);
+                return null;
+            }
+
+            case "previewLayout":
+            {
+                // layoutId → JSON { "inputMap": { ... } }
+                if (string.IsNullOrWhiteSpace(payload))
+                    throw new ArgumentException("layoutId required");
+                var map = ProfileService.PreviewLayoutMap(payload.Trim());
+                using var stream = new MemoryStream();
+                using (var writer = new Utf8JsonWriter(stream))
+                {
+                    writer.WriteStartObject();
+                    writer.WriteString("layoutId", payload.Trim());
+                    writer.WriteString("layoutName", ProfileService.LayoutDisplayName(payload.Trim()));
+                    writer.WriteStartObject("inputMap");
+                    foreach (var (key, value) in map)
+                        writer.WriteString(key, value);
+                    writer.WriteEndObject();
+                    writer.WriteEndObject();
+                }
+                return Encoding.UTF8.GetString(stream.ToArray());
             }
 
             case "duplicateProfile":
@@ -228,7 +269,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 if (bits.Length < 1) throw new ArgumentException("profileId required");
                 var created = _profiles.Duplicate(bits[0], bits.Length > 1 ? bits[1] : null);
                 _bridge.SetActiveProfileManual(created.Id);
-                break;
+                return null;
             }
 
             case "renameProfile":
@@ -237,13 +278,13 @@ public sealed class GameBarFileIpcService : IDisposable
                 var bits = payload.Split('\t');
                 if (bits.Length < 2) throw new ArgumentException("Invalid renameProfile payload");
                 _profiles.Rename(bits[0], bits[1]);
-                break;
+                return null;
             }
 
             case "deleteProfile":
             {
                 _profiles.Delete(payload.Trim());
-                break;
+                return null;
             }
 
             case "setSensitivity":
@@ -252,12 +293,12 @@ public sealed class GameBarFileIpcService : IDisposable
                 var p = JsonSerializer.Deserialize<SensitivityPayload>(payload, CaseInsensitiveJson)
                     ?? throw new ArgumentException("Invalid sensitivity payload");
                 _profiles.SetSensitivity(p.ProfileId, p);
-                break;
+                return null;
             }
 
             case "ensureOfficialLayouts":
                 _profiles.EnsureOfficialLayouts();
-                break;
+                return null;
 
             default:
                 throw new InvalidOperationException("Unknown command: " + command);
@@ -294,9 +335,9 @@ public sealed class GameBarFileIpcService : IDisposable
         if (_localStatePath is null) return;
         var status = _bridge.Status;
         // Always publish the user's saved profile for the widget UI — never the Game Bar runtime override.
-        var active = _profiles.GetProfiles().FirstOrDefault(p => p.Id == status.ActiveProfileId)
+        var active = _profiles.GetUserProfiles().FirstOrDefault(p => p.Id == status.ActiveProfileId)
                      ?? _profiles.ActiveProfile;
-        var profiles = _profiles.GetProfiles();
+        var profiles = _profiles.GetUserProfiles();
         var caps = _bridge.Drivers.GetCapabilities(status.ActiveDriverId);
 
         using var stream = new MemoryStream();
@@ -309,6 +350,8 @@ public sealed class GameBarFileIpcService : IDisposable
             writer.WriteBoolean("steamRunning", status.SteamRunning);
             writer.WriteString("activeProfileId", active.Id);
             writer.WriteString("activeProfileName", active.Name);
+            writer.WriteString("activeLayoutId", active.LayoutId ?? "");
+            writer.WriteString("activeLayoutName", ProfileService.LayoutDisplayName(active.LayoutId));
             writer.WriteString("activeProfileSource", status.ActiveProfileSource);
             writer.WriteString("currentGameExe", status.CurrentGameExe ?? "");
             writer.WriteString("activeDriverId", status.ActiveDriverId ?? "");

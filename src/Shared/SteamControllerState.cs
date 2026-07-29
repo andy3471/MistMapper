@@ -29,8 +29,8 @@ public sealed class SteamControllerState
     public bool LeftTrackpadClick { get; set; }
     public bool RightTrackpadClick { get; set; }
 
-    public short LeftTrigger { get; set; }
-    public short RightTrigger { get; set; }
+    public ushort LeftTrigger { get; set; }
+    public ushort RightTrigger { get; set; }
     public short LeftStickX { get; set; }
     public short LeftStickY { get; set; }
     public short RightStickX { get; set; }

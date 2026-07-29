@@ -58,8 +58,8 @@ public sealed class SteamReportParserTests
     public void TryParse_reads_analog_values()
     {
         var buf = CreateReport();
-        BinaryPrimitives.WriteInt16LittleEndian(buf.AsSpan(6), 1000);
-        BinaryPrimitives.WriteInt16LittleEndian(buf.AsSpan(8), 2000);
+        BinaryPrimitives.WriteUInt16LittleEndian(buf.AsSpan(6), 1000);
+        BinaryPrimitives.WriteUInt16LittleEndian(buf.AsSpan(8), 2000);
         BinaryPrimitives.WriteInt16LittleEndian(buf.AsSpan(10), -5000);
         BinaryPrimitives.WriteInt16LittleEndian(buf.AsSpan(12), 3000);
 
@@ -68,6 +68,19 @@ public sealed class SteamReportParserTests
         state.RightTrigger.Should().Be(2000);
         state.LeftStickX.Should().Be(-5000);
         state.LeftStickY.Should().Be(3000);
+    }
+
+    [Fact]
+    public void TryParse_reads_full_pull_triggers_as_unsigned()
+    {
+        var buf = CreateReport();
+        // Values above Int16.MaxValue — the old signed parse treated these as negative.
+        BinaryPrimitives.WriteUInt16LittleEndian(buf.AsSpan(6), 40000);
+        BinaryPrimitives.WriteUInt16LittleEndian(buf.AsSpan(8), 65535);
+
+        SteamReportParser.TryParse(buf, out var state).Should().BeTrue();
+        state.LeftTrigger.Should().Be(40000);
+        state.RightTrigger.Should().Be(65535);
     }
 
     [Fact]

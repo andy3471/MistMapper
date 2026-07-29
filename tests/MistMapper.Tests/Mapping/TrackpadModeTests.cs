@@ -134,4 +134,42 @@ public sealed class TrackpadModeTests
         state.ThumbLX.Should().Be(0);
         state.ThumbLY.Should().Be(0);
     }
+
+    [Fact]
+    public void MouseJoystick_relative_swipe_deflects_right_stick()
+    {
+        var profile = OfficialLayouts.CreateGamepad();
+        profile.RightTrackpad = TrackpadMode.AsMouseJoystick;
+        profile.Gyro = GyroMode.Off;
+
+        var seed = new InputFrame();
+        seed.Digitals["RightTrackpad"] = true;
+        seed.Vectors["RightTrackpad"] = (0f, 0f);
+        _engine.Map(seed, profile);
+
+        var swipe = new InputFrame();
+        swipe.Digitals["RightTrackpad"] = true;
+        swipe.Vectors["RightTrackpad"] = (0.25f, 0.1f);
+        var state = _engine.Map(swipe, profile);
+
+        state.ThumbRX.Should().BeGreaterThan(0, "horizontal swipe should aim right stick");
+        state.ThumbRY.Should().BeGreaterThan(0, "vertical swipe should aim right stick");
+        _engine.TryConsumeMouseDelta(out _, out _).Should().BeFalse("mouse joystick must not move the OS cursor");
+    }
+
+    [Fact]
+    public void MouseJoystick_gyro_deflects_right_stick()
+    {
+        var profile = OfficialLayouts.CreateGamepad();
+        profile.RightTrackpad = TrackpadMode.Off;
+        profile.Gyro = GyroMode.AsMouseJoystick;
+
+        var frame = new InputFrame();
+        frame.Vectors["Gyro"] = (0.2f, 0.4f);
+        var state = _engine.Map(frame, profile);
+
+        state.ThumbRX.Should().NotBe(0);
+        state.ThumbRY.Should().NotBe(0);
+        _engine.TryConsumeMouseDelta(out _, out _).Should().BeFalse();
+    }
 }
