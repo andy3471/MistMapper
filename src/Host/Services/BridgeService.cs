@@ -773,7 +773,13 @@ public sealed class BridgeService : IDisposable
         return true;
     }
 
-    static bool IsGameBarOverrideActive() => false;
+    bool IsGameBarOverrideActive()
+    {
+        // Use overlay-window visibility (GameBarWatcher), not widget heartbeat.
+        // Heartbeat / widget process can stay "alive" after Win+G is dismissed and would
+        // otherwise stick the bridge in stock Xbox mode.
+        return _gameBar.IsGameBarOpen;
+    }
 
     void EnterLizardForLock()
     {

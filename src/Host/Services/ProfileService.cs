@@ -273,8 +273,14 @@ public sealed class ProfileService
             StringComparer.OrdinalIgnoreCase);
         target.LeftTrackpad = template.LeftTrackpad;
         target.RightTrackpad = template.RightTrackpad;
+        target.LeftTrackpadSettings = TrackpadSurfaceSettings.Clone(template.LeftTrackpadSettings);
+        target.RightTrackpadSettings = TrackpadSurfaceSettings.Clone(template.RightTrackpadSettings);
         target.Gyro = template.Gyro;
         target.GyroSensitivity = template.GyroSensitivity;
+        target.GyroButtons = template.GyroButtons.ToList();
+        target.GyroButtonMode = template.GyroButtonMode;
+        target.GyroButtonCombine = template.GyroButtonCombine;
+        target.GyroDotsPer360 = template.GyroDotsPer360;
         target.StickDeadzone = template.StickDeadzone;
         target.TriggerDeadzone = template.TriggerDeadzone;
         target.TrackpadDeadzone = template.TrackpadDeadzone;
@@ -408,6 +414,19 @@ public sealed class ProfileService
             if (s.GyroSensitivity.HasValue) p.GyroSensitivity = s.GyroSensitivity.Value;
             if (s.GyroSensitivityX.HasValue) p.GyroSensitivityX = s.GyroSensitivityX.Value;
             if (s.GyroSensitivityY.HasValue) p.GyroSensitivityY = s.GyroSensitivityY.Value;
+            if (s.GyroDotsPer360.HasValue) p.GyroDotsPer360 = Math.Clamp(s.GyroDotsPer360.Value, 500f, 20000f);
+            if (!string.IsNullOrWhiteSpace(s.GyroButtonMode)
+                && Enum.TryParse<GyroButtonMode>(s.GyroButtonMode, true, out var gbm))
+                p.GyroButtonMode = gbm;
+            if (!string.IsNullOrWhiteSpace(s.GyroButtonCombine)
+                && Enum.TryParse<GyroButtonCombine>(s.GyroButtonCombine, true, out var gbc))
+                p.GyroButtonCombine = gbc;
+            if (s.GyroButtons is not null)
+                p.GyroButtons = s.GyroButtons.Where(b => !string.IsNullOrWhiteSpace(b)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (s.LeftTrackpadSettings is not null)
+                p.LeftTrackpadSettings = TrackpadSurfaceSettings.Clone(s.LeftTrackpadSettings);
+            if (s.RightTrackpadSettings is not null)
+                p.RightTrackpadSettings = TrackpadSurfaceSettings.Clone(s.RightTrackpadSettings);
             if (s.InvertStickX.HasValue) p.InvertStickX = s.InvertStickX.Value;
             if (s.InvertStickY.HasValue) p.InvertStickY = s.InvertStickY.Value;
             if (s.InvertTrackpadX.HasValue) p.InvertTrackpadX = s.InvertTrackpadX.Value;
@@ -827,8 +846,14 @@ public sealed class ProfileService
                 StringComparer.OrdinalIgnoreCase),
             LeftTrackpad = p.LeftTrackpad,
             RightTrackpad = p.RightTrackpad,
+            LeftTrackpadSettings = TrackpadSurfaceSettings.Clone(p.LeftTrackpadSettings),
+            RightTrackpadSettings = TrackpadSurfaceSettings.Clone(p.RightTrackpadSettings),
             Gyro = p.Gyro,
             GyroSensitivity = p.GyroSensitivity,
+            GyroButtons = p.GyroButtons.ToList(),
+            GyroButtonMode = p.GyroButtonMode,
+            GyroButtonCombine = p.GyroButtonCombine,
+            GyroDotsPer360 = p.GyroDotsPer360,
             StickDeadzone = p.StickDeadzone,
             TriggerDeadzone = p.TriggerDeadzone,
             TrackpadDeadzone = p.TrackpadDeadzone,

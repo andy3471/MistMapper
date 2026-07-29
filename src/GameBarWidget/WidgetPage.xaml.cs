@@ -30,11 +30,26 @@ namespace MistMapper.GameBarWidget
             "Off", "AsMouse", "AsMouseJoystick", "AsLeftStick", "AsRightStick", "AsDpad", "FlickStick", "ScrollWheel", "ButtonPad"
         };
         static readonly string[] GyroModes = { "Off", "AsRightStick", "AsMouse", "AsMouseJoystick" };
+        static readonly string[] GyroButtonModes = { "HoldToEnable", "HoldToSuppress", "Toggle" };
+        static readonly string[] GyroCombineModes = { "Any", "All" };
+        static readonly string[] TrackballFrictions = { "Off", "Low", "Medium", "High", "ExtraHigh" };
+        static readonly (string Id, string Label)[] GyroActivationChoices =
+        {
+            ("RightTrackpad", "Right Trackpad Touch"),
+            ("LeftTrackpad", "Left Trackpad Touch"),
+            ("RightStickTouch", "Right Stick Touch"),
+            ("LeftStickTouch", "Left Stick Touch"),
+            ("RsClick", "Right Stick Click"),
+            ("LsClick", "Left Stick Click"),
+            ("R4", "R4"), ("R5", "R5"), ("L4", "L4"), ("L5", "L5"),
+            ("Rb", "RB"), ("Lb", "LB"), ("Rt", "RT"), ("Lt", "LT"),
+            ("A", "A"), ("B", "B"), ("X", "X"), ("Y", "Y"),
+        };
 
         static string FormatModeLabel(string mode) => mode switch
         {
             "Off" => "Off",
-            "AsMouse" => "Mouse",
+            "AsMouse" => "As Mouse",
             "AsMouseJoystick" => "Mouse Joystick",
             "AsLeftStick" => "Left Stick",
             "AsRightStick" => "Right Stick",
@@ -42,6 +57,15 @@ namespace MistMapper.GameBarWidget
             "FlickStick" => "Flick Stick",
             "ScrollWheel" => "Scroll Wheel",
             "ButtonPad" => "Button Pad",
+            "HoldToEnable" => "Hold to Enable Gyro",
+            "HoldToSuppress" => "Hold to Suppress Gyro",
+            "Toggle" => "Toggle Gyro",
+            "Any" => "Any",
+            "All" => "All",
+            "Low" => "Low",
+            "Medium" => "Medium",
+            "High" => "High",
+            "ExtraHigh" => "Extra High",
             _ => mode
         };
 
@@ -101,7 +125,7 @@ namespace MistMapper.GameBarWidget
                 new[] { "trackpadSensitivityX", "trackpadSensitivityY" }, new[] { "trackpadDeadzone" },
                 new[] { "invertTrackpadX", "invertTrackpadY" }, new[] { "left", "right" }),
             ("Gyro", Array.Empty<string>(),
-                new[] { "gyroSensitivityX", "gyroSensitivityY" }, Array.Empty<string>(),
+                new[] { "gyroSensitivity", "gyroSensitivityX", "gyroSensitivityY" }, Array.Empty<string>(),
                 new[] { "invertGyroX", "invertGyroY" }, new[] { "gyro" }),
             ("Menu", new[] { "View", "Menu", "Steam" }, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>()),
         };
@@ -167,7 +191,9 @@ namespace MistMapper.GameBarWidget
         {
             ["stickSensitivityX"] = 1, ["stickSensitivityY"] = 1,
             ["trackpadSensitivityX"] = 1, ["trackpadSensitivityY"] = 1,
+            ["gyroSensitivity"] = 1,
             ["gyroSensitivityX"] = 1, ["gyroSensitivityY"] = 1,
+            ["gyroDotsPer360"] = 6545,
             ["stickDeadzone"] = 0.08, ["trackpadDeadzone"] = 0.02, ["triggerDeadzone"] = 0.05,
         };
         readonly Dictionary<string, bool> _invertValues = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
@@ -179,6 +205,29 @@ namespace MistMapper.GameBarWidget
         readonly Dictionary<string, string> _modeValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["left"] = "Off", ["right"] = "Off", ["gyro"] = "Off",
+        };
+        readonly List<string> _gyroButtons = new List<string>();
+        string _gyroButtonMode = "HoldToEnable";
+        string _gyroButtonCombine = "Any";
+        readonly Dictionary<string, bool> _trackballMode = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["left"] = true, ["right"] = true
+        };
+        readonly Dictionary<string, string> _trackballFriction = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["left"] = "Medium", ["right"] = "Medium"
+        };
+        readonly Dictionary<string, double> _padSmoothing = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["left"] = 20, ["right"] = 20
+        };
+        readonly Dictionary<string, double> _padVertFriction = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["left"] = 1, ["right"] = 1
+        };
+        readonly Dictionary<string, double> _padRotation = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["left"] = 0, ["right"] = 0
         };
 
         public WidgetPage()
@@ -389,7 +438,12 @@ namespace MistMapper.GameBarWidget
             RemapView.Visibility == Visibility.Visible
             || BrowseLayoutView.Visibility == Visibility.Visible
             || PreviewLayoutView.Visibility == Visibility.Visible
-            || SettingsView.Visibility == Visibility.Visible;
+            || SettingsView.Visibility == Visibility.Visible
+            || AdvancedSettingsView.Visibility == Visibility.Visible
+            || ListPickerView.Visibility == Visibility.Visible;
+
+        TaskCompletionSource<bool> _advancedSettingsTcs;
+        TaskCompletionSource<int> _listPickerTcs;
 
         void HighlightViewEditTabs()
         {
@@ -1044,6 +1098,27 @@ namespace MistMapper.GameBarWidget
                 return;
 
             var key = e.Key;
+            if (ListPickerView.Visibility == Visibility.Visible)
+            {
+                if (key == Windows.System.VirtualKey.GamepadB || key == Windows.System.VirtualKey.Escape)
+                {
+                    ListPickerBack_Click(this, new RoutedEventArgs());
+                    e.Handled = true;
+                }
+                return;
+            }
+
+            if (AdvancedSettingsView.Visibility == Visibility.Visible)
+            {
+                // Don't bind A globally — it must toggle pill rows. Save is the accent button.
+                if (key == Windows.System.VirtualKey.GamepadB || key == Windows.System.VirtualKey.Escape)
+                {
+                    AdvancedSettingsBack_Click(this, new RoutedEventArgs());
+                    e.Handled = true;
+                }
+                return;
+            }
+
             if (SettingsView.Visibility == Visibility.Visible)
             {
                 if (key == Windows.System.VirtualKey.GamepadB || key == Windows.System.VirtualKey.Escape)
@@ -1110,6 +1185,8 @@ namespace MistMapper.GameBarWidget
             var current = _modeValues.ContainsKey(tag) ? _modeValues[tag] : "Off";
             var title = tag == "gyro" ? "Gyro mode" : (tag == "left" ? "Left pad mode" : "Right pad mode");
             var selected = await PickListIndexAsync(title, labels, FormatModeLabel(current));
+            if (AdvancedSettingsView.Visibility != Visibility.Visible)
+                MainView.Visibility = Visibility.Visible;
             if (selected < 0) return;
 
             var mode = modes[selected];
@@ -1141,8 +1218,8 @@ namespace MistMapper.GameBarWidget
                 await RefreshAsync(force: true);
         }
 
-        /// <summary>Gamepad-friendly list picker (ComboBox flyouts break in Game Bar).</summary>
-        static async Task<int> PickListIndexAsync(string title, IReadOnlyList<string> items, string selectedValue)
+        /// <summary>In-widget list picker with pill rows (ContentDialog chrome looks wrong in Game Bar).</summary>
+        async Task<int> PickListIndexAsync(string title, IReadOnlyList<string> items, string selectedValue)
         {
             var selectedIndex = -1;
             for (int i = 0; i < items.Count; i++)
@@ -1156,74 +1233,56 @@ namespace MistMapper.GameBarWidget
             return await PickListIndexAsync(title, items, selectedIndex);
         }
 
-        static async Task<int> PickListIndexAsync(string title, IReadOnlyList<string> items, int selectedIndex)
+        async Task<int> PickListIndexAsync(string title, IReadOnlyList<string> items, int selectedIndex)
         {
             if (items == null || items.Count == 0) return -1;
 
-            var list = new ListView
-            {
-                SelectionMode = ListViewSelectionMode.Single,
-                IsItemClickEnabled = true,
-                MaxHeight = 320,
-                HorizontalAlignment = HorizontalAlignment.Stretch
-            };
-            foreach (var item in items)
-                list.Items.Add(item);
-            if (selectedIndex >= 0 && selectedIndex < items.Count)
-                list.SelectedIndex = selectedIndex;
-            else
-                list.SelectedIndex = 0;
+            _listPickerTcs?.TrySetResult(-1);
+            _listPickerTcs = new TaskCompletionSource<int>();
 
-            var accepted = false;
-            var picked = -1;
-            ContentDialog dialog = null;
-
-            void AcceptCurrent()
+            ListPickerTitle.Text = title;
+            ListPickerContent.Children.Clear();
+            for (int i = 0; i < items.Count; i++)
             {
-                if (list.SelectedIndex < 0) return;
-                picked = list.SelectedIndex;
-                accepted = true;
-                dialog?.Hide();
+                var index = i;
+                var selected = index == selectedIndex
+                               || (selectedIndex < 0 && index == 0);
+                var btn = new ToggleButton
+                {
+                    Content = items[i],
+                    IsChecked = selected,
+                    Style = (Style)Application.Current.Resources["PillToggleButtonStyle"],
+                    Margin = new Thickness(0, 0, 0, 8),
+                    Tag = index
+                };
+                btn.Click += (s, __) =>
+                {
+                    _listPickerTcs?.TrySetResult(index);
+                    CloseListPicker();
+                };
+                ListPickerContent.Children.Add(btn);
             }
 
-            // A / click on a row should select immediately (not require the Primary button).
-            list.ItemClick += (s, args) =>
-            {
-                list.SelectedItem = args.ClickedItem;
-                AcceptCurrent();
-            };
-            list.KeyDown += (s, e) =>
-            {
-                if (e.Key == Windows.System.VirtualKey.GamepadA
-                    || e.Key == Windows.System.VirtualKey.Enter
-                    || e.Key == Windows.System.VirtualKey.Space)
-                {
-                    AcceptCurrent();
-                    e.Handled = true;
-                }
-            };
+            MainView.Visibility = Visibility.Collapsed;
+            ListPickerView.Visibility = Visibility.Visible;
+            return await _listPickerTcs.Task;
+        }
 
-            dialog = new ContentDialog
-            {
-                Title = title,
-                Content = list,
-                PrimaryButtonText = "Select",
-                CloseButtonText = "Cancel",
-                // None so Gamepad A activates the focused list item, not the Primary button.
-                DefaultButton = ContentDialogButton.None
-            };
+        void ListPickerBack_Click(object sender, RoutedEventArgs e)
+        {
+            _listPickerTcs?.TrySetResult(-1);
+            CloseListPicker();
+            if (AdvancedSettingsView.Visibility != Visibility.Visible
+                && SettingsView.Visibility != Visibility.Visible
+                && RemapView.Visibility != Visibility.Visible
+                && BrowseLayoutView.Visibility != Visibility.Visible
+                && PreviewLayoutView.Visibility != Visibility.Visible)
+                MainView.Visibility = Visibility.Visible;
+        }
 
-            dialog.Opened += (s, e) =>
-            {
-                list.Focus(FocusState.Programmatic);
-                if (list.SelectedItem != null)
-                    list.ScrollIntoView(list.SelectedItem);
-            };
-
-            var result = await dialog.ShowAsync();
-            if (accepted) return picked;
-            if (result == ContentDialogResult.Primary) return list.SelectedIndex;
-            return -1;
+        void CloseListPicker()
+        {
+            ListPickerView.Visibility = Visibility.Collapsed;
         }
 
         static async Task<string> PromptTextAsync(string title, string header, string initial)
@@ -1253,10 +1312,360 @@ namespace MistMapper.GameBarWidget
                 parts.Add("\"" + kv.Key + "\":" + kv.Value.ToString(CultureInfo.InvariantCulture));
             foreach (var kv in _invertValues)
                 parts.Add("\"" + kv.Key + "\":" + (kv.Value ? "true" : "false"));
+            parts.Add("\"gyroButtonMode\":\"" + _gyroButtonMode + "\"");
+            parts.Add("\"gyroButtonCombine\":\"" + _gyroButtonCombine + "\"");
+            parts.Add("\"gyroButtons\":[" + string.Join(",", _gyroButtons.Select(b => "\"" + b + "\"")) + "]");
+            parts.Add("\"leftTrackpadSettings\":" + SerializePadSettings("left"));
+            parts.Add("\"rightTrackpadSettings\":" + SerializePadSettings("right"));
             var json = "{" + string.Join(",", parts) + "}";
             var resp = await IpcClient.SendAsync("setSensitivity", json);
             if (!resp.IsOk)
                 StatusText.Text = resp.Error ?? "Sensitivity update failed";
+        }
+
+        string SerializePadSettings(string side) =>
+            "{"
+            + "\"trackballMode\":" + (_trackballMode[side] ? "true" : "false") + ","
+            + "\"trackballFriction\":\"" + _trackballFriction[side] + "\","
+            + "\"verticalFrictionScale\":" + _padVertFriction[side].ToString(CultureInfo.InvariantCulture) + ","
+            + "\"smoothing\":" + _padSmoothing[side].ToString(CultureInfo.InvariantCulture) + ","
+            + "\"rotationDegrees\":" + _padRotation[side].ToString(CultureInfo.InvariantCulture)
+            + "}";
+
+        async void AdvancedSettingsCog_Click(object sender, RoutedEventArgs e)
+        {
+            if (_suppress || !(sender is Button btn) || !(btn.Tag is string tag)) return;
+            if (tag == "gyro")
+                await ShowGyroAdvancedSettingsAsync();
+            else
+                await ShowTrackpadAdvancedSettingsAsync(tag);
+        }
+
+        async Task ShowGyroAdvancedSettingsAsync()
+        {
+            var draftButtons = new List<string>(_gyroButtons);
+            var draftMode = _gyroButtonMode;
+            var draftCombine = _gyroButtonCombine;
+            var draftDots = _sensValues.ContainsKey("gyroDotsPer360") ? _sensValues["gyroDotsPer360"] : 6545;
+
+            AdvancedSettingsContent.Children.Clear();
+            AdvancedSettingsTitle.Text = "Gyro settings";
+            AdvancedSettingsSubtitle.Text = "B cancel · Save when done";
+
+            AdvancedSettingsContent.Children.Add(SectionLabel("Activation"));
+            AdvancedSettingsContent.Children.Add(Hint("Buttons Enable / Suppress / Toggle the gyro. None = always on."));
+
+            var chipsHost = new StackPanel { Margin = new Thickness(0, 0, 0, 4) };
+            void RebuildChips()
+            {
+                chipsHost.Children.Clear();
+                if (draftButtons.Count == 0)
+                {
+                    chipsHost.Children.Add(new Border
+                    {
+                        CornerRadius = new CornerRadius(16),
+                        Background = (Windows.UI.Xaml.Media.Brush)Application.Current.Resources["SystemControlBackgroundBaseLowBrush"],
+                        Padding = new Thickness(16, 12, 16, 12),
+                        Margin = new Thickness(0, 0, 0, 8),
+                        Child = new TextBlock
+                        {
+                            Text = "Always on",
+                            FontSize = 15,
+                            Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"]
+                        }
+                    });
+                }
+                else
+                {
+                    foreach (var id in draftButtons.ToList())
+                    {
+                        var label = GyroButtonLabel(id);
+                        var chip = new Button
+                        {
+                            Content = label + "   \u2715",
+                            Style = (Style)Application.Current.Resources["PillButtonStyle"],
+                            HorizontalAlignment = HorizontalAlignment.Stretch,
+                            HorizontalContentAlignment = HorizontalAlignment.Left,
+                            Margin = new Thickness(0, 0, 0, 8),
+                            Padding = new Thickness(16, 12, 16, 12),
+                            Tag = id
+                        };
+                        ToolTipService.SetToolTip(chip, "Remove " + label);
+                        chip.Click += (_, __) =>
+                        {
+                            draftButtons.RemoveAll(b => b.Equals(id, StringComparison.OrdinalIgnoreCase));
+                            RebuildChips();
+                        };
+                        chipsHost.Children.Add(chip);
+                    }
+                }
+
+                var addBtn = new Button
+                {
+                    Content = "+ Add button",
+                    Style = (Style)Application.Current.Resources["PillAccentButtonStyle"],
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    Margin = new Thickness(0, 4, 0, 0),
+                    Padding = new Thickness(16, 12, 16, 12)
+                };
+                addBtn.Click += async (_, __) =>
+                {
+                    var available = GyroActivationChoices
+                        .Where(c => !draftButtons.Any(b => b.Equals(c.Id, StringComparison.OrdinalIgnoreCase)))
+                        .ToList();
+                    if (available.Count == 0)
+                    {
+                        StatusText.Text = "All activation buttons already added";
+                        return;
+                    }
+
+                    AdvancedSettingsView.Visibility = Visibility.Collapsed;
+                    var picked = await PickListIndexAsync(
+                        "Add gyro button",
+                        available.Select(c => c.Label).ToArray(),
+                        0);
+                    AdvancedSettingsView.Visibility = Visibility.Visible;
+                    MainView.Visibility = Visibility.Collapsed;
+                    if (picked < 0) return;
+                    draftButtons.Add(available[picked].Id);
+                    RebuildChips();
+                };
+                chipsHost.Children.Add(addBtn);
+
+                if (draftButtons.Count > 0)
+                {
+                    var clearBtn = new Button
+                    {
+                        Content = "Clear (always on)",
+                        Style = (Style)Application.Current.Resources["PillButtonStyle"],
+                        HorizontalAlignment = HorizontalAlignment.Stretch,
+                        Margin = new Thickness(0, 8, 0, 0),
+                        Padding = new Thickness(16, 12, 16, 12)
+                    };
+                    clearBtn.Click += (_, __) =>
+                    {
+                        draftButtons.Clear();
+                        RebuildChips();
+                    };
+                    chipsHost.Children.Add(clearBtn);
+                }
+            }
+            RebuildChips();
+            AdvancedSettingsContent.Children.Add(chipsHost);
+
+            AdvancedSettingsContent.Children.Add(SectionLabel("Behavior"));
+            AdvancedSettingsContent.Children.Add(BuildChoicePillRow(
+                "Enable / Suppress / Toggle",
+                GyroButtonModes, GyroButtonModes.Select(FormatModeLabel).ToArray(),
+                draftMode, v => draftMode = v));
+            AdvancedSettingsContent.Children.Add(BuildChoicePillRow(
+                "Multiple buttons",
+                GyroCombineModes, GyroCombineModes.Select(FormatModeLabel).ToArray(),
+                draftCombine, v => draftCombine = v));
+
+            AdvancedSettingsContent.Children.Add(SectionLabel("Calibration"));
+            AdvancedSettingsContent.Children.Add(Hint("Dots Per 360° — one full turn → this many mouse pixels at 1× sensitivity."));
+            var dots = MakeStyledSlider("Dots Per 360°", 1000, 12000, 5, draftDots);
+            dots.ValueChanged += (_, ev) => draftDots = ev.NewValue;
+            AdvancedSettingsContent.Children.Add(dots);
+
+            if (!await ShowAdvancedSettingsSheetAsync())
+                return;
+
+            _gyroButtons.Clear();
+            _gyroButtons.AddRange(draftButtons);
+            _gyroButtonMode = draftMode;
+            _gyroButtonCombine = draftCombine;
+            _sensValues["gyroDotsPer360"] = draftDots;
+            await SendSensitivityAsync();
+            RebuildEditCategoryContent();
+        }
+
+        async Task ShowTrackpadAdvancedSettingsAsync(string side)
+        {
+            var draftTrackball = _trackballMode[side];
+            var draftFriction = _trackballFriction[side];
+            var draftVert = _padVertFriction[side];
+            var draftSmooth = _padSmoothing[side];
+            var draftRot = _padRotation[side];
+
+            AdvancedSettingsContent.Children.Clear();
+            AdvancedSettingsTitle.Text = side == "left" ? "Left trackpad" : "Right trackpad";
+            AdvancedSettingsSubtitle.Text = "B cancel · Save when done";
+
+            AdvancedSettingsContent.Children.Add(SectionLabel("Trackball"));
+            var trackball = MakePillToggle("Trackball Mode", draftTrackball);
+            trackball.Checked += (_, __) => draftTrackball = true;
+            trackball.Unchecked += (_, __) => draftTrackball = false;
+            AdvancedSettingsContent.Children.Add(trackball);
+            AdvancedSettingsContent.Children.Add(Hint("Keeps momentum after you lift your thumb."));
+
+            AdvancedSettingsContent.Children.Add(BuildChoicePillRow(
+                "Trackball Friction",
+                TrackballFrictions, TrackballFrictions.Select(FormatModeLabel).ToArray(),
+                draftFriction, v => draftFriction = v));
+
+            AdvancedSettingsContent.Children.Add(SectionLabel("Feel"));
+            var vFric = MakeStyledSlider("Vertical Friction Scale %", 10, 300, 5, draftVert * 100);
+            vFric.ValueChanged += (_, ev) => draftVert = ev.NewValue / 100.0;
+            AdvancedSettingsContent.Children.Add(vFric);
+            AdvancedSettingsContent.Children.Add(Hint("Higher stops up/down flicks sooner (good for camera yaw)."));
+
+            var smooth = MakeStyledSlider("Smoothing", 0, 100, 1, draftSmooth);
+            smooth.ValueChanged += (_, ev) => draftSmooth = ev.NewValue;
+            AdvancedSettingsContent.Children.Add(smooth);
+            AdvancedSettingsContent.Children.Add(Hint("Higher removes jitter but adds lag."));
+
+            var rot = MakeStyledSlider("Rotation (°)", -45, 45, 1, draftRot);
+            rot.ValueChanged += (_, ev) => draftRot = ev.NewValue;
+            AdvancedSettingsContent.Children.Add(rot);
+            AdvancedSettingsContent.Children.Add(Hint("Cant pad axes to match a natural thumb swipe."));
+
+            if (!await ShowAdvancedSettingsSheetAsync())
+                return;
+
+            _trackballMode[side] = draftTrackball;
+            _trackballFriction[side] = draftFriction;
+            _padVertFriction[side] = draftVert;
+            _padSmoothing[side] = draftSmooth;
+            _padRotation[side] = draftRot;
+            await SendSensitivityAsync();
+        }
+
+        async Task<bool> ShowAdvancedSettingsSheetAsync()
+        {
+            _advancedSettingsTcs?.TrySetResult(false);
+            _advancedSettingsTcs = new TaskCompletionSource<bool>();
+            MainView.Visibility = Visibility.Collapsed;
+            AdvancedSettingsView.Visibility = Visibility.Visible;
+            return await _advancedSettingsTcs.Task;
+        }
+
+        void AdvancedSettingsBack_Click(object sender, RoutedEventArgs e)
+        {
+            AdvancedSettingsView.Visibility = Visibility.Collapsed;
+            MainView.Visibility = Visibility.Visible;
+            _advancedSettingsTcs?.TrySetResult(false);
+        }
+
+        void AdvancedSettingsSave_Click(object sender, RoutedEventArgs e)
+        {
+            AdvancedSettingsView.Visibility = Visibility.Collapsed;
+            MainView.Visibility = Visibility.Visible;
+            _advancedSettingsTcs?.TrySetResult(true);
+        }
+
+        /// <summary>Pill row that opens the list picker sheet (same chrome as the rest of the widget).</summary>
+        UIElement BuildChoicePillRow(string label, string[] values, string[] displayLabels,
+            string current, Action<string> onChanged)
+        {
+            var currentLocal = current;
+            var btn = new Button
+            {
+                Style = (Style)Application.Current.Resources["PillButtonStyle"],
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(0, 0, 0, 8),
+                Padding = new Thickness(16, 12, 16, 12)
+            };
+            var panel = new StackPanel();
+            panel.Children.Add(new TextBlock
+            {
+                Text = label,
+                FontSize = 12,
+                Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"]
+            });
+            var valueText = new TextBlock { Text = FormatModeLabel(currentLocal), FontSize = 15 };
+            panel.Children.Add(valueText);
+            btn.Content = panel;
+
+            btn.Click += async (_, __) =>
+            {
+                var idx = Array.IndexOf(values, currentLocal);
+                AdvancedSettingsView.Visibility = Visibility.Collapsed;
+                var picked = await PickListIndexAsync(label, displayLabels, idx >= 0 ? idx : 0);
+                AdvancedSettingsView.Visibility = Visibility.Visible;
+                MainView.Visibility = Visibility.Collapsed;
+                if (picked < 0) return;
+                currentLocal = values[picked];
+                onChanged(currentLocal);
+                valueText.Text = displayLabels[picked];
+            };
+            return btn;
+        }
+
+        static string GyroButtonLabel(string id)
+        {
+            foreach (var (choiceId, label) in GyroActivationChoices)
+            {
+                if (choiceId.Equals(id, StringComparison.OrdinalIgnoreCase))
+                    return label;
+            }
+            return id;
+        }
+
+        static ToggleButton MakePillToggle(string label, bool isOn)
+        {
+            return new ToggleButton
+            {
+                Content = label,
+                IsChecked = isOn,
+                Style = (Style)Application.Current.Resources["PillToggleButtonStyle"],
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+        }
+
+        static Slider MakeStyledSlider(string header, double min, double max, double step, double value)
+        {
+            return new Slider
+            {
+                Header = header,
+                Minimum = min,
+                Maximum = max,
+                StepFrequency = step,
+                SmallChange = step,
+                LargeChange = step * 5,
+                SnapsTo = SliderSnapsTo.StepValues,
+                Value = value,
+                MinHeight = 48,
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+        }
+
+        static TextBlock SectionLabel(string text) => new TextBlock
+        {
+            Text = text,
+            FontSize = 13,
+            FontWeight = Windows.UI.Text.FontWeights.SemiBold,
+            Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"],
+            Margin = new Thickness(0, 12, 0, 8)
+        };
+
+        static TextBlock Hint(string text) => new TextBlock
+        {
+            Text = text,
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"],
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+
+        string FormatGyroButtonsSummary()
+        {
+            if (_gyroButtons.Count == 0) return "Always on";
+            if (_gyroButtons.Count <= 2) return string.Join(", ", _gyroButtons);
+            return _gyroButtons.Count + " selected";
+        }
+
+        void ReadPadSettings(Windows.Data.Json.JsonObject state, string key, string side)
+        {
+            if (!state.ContainsKey(key)) return;
+            var obj = state.GetNamedObject(key);
+            _trackballMode[side] = obj.GetNamedBoolean("trackballMode", true);
+            _trackballFriction[side] = obj.GetNamedString("trackballFriction", "Medium");
+            _padVertFriction[side] = obj.GetNamedNumber("verticalFrictionScale", 1);
+            _padSmoothing[side] = obj.GetNamedNumber("smoothing", 20);
+            _padRotation[side] = obj.GetNamedNumber("rotationDegrees", 0);
         }
 
         // ═══════════════ Edit panel: category tabs + content ═══════════════
@@ -1325,22 +1734,27 @@ namespace MistMapper.GameBarWidget
                     AddInputCard(inputId);
             }
 
-            // Mode pickers (trackpad/gyro) — buttons open a ContentDialog list
+            // Mode pickers (trackpad/gyro) — behavior dropdown + Steam-style cog for advanced settings
             if (category.ModeKeys.Length > 0)
             {
-                AddSectionHeader("Mode");
+                AddSectionHeader("Behavior");
                 foreach (var modeKey in category.ModeKeys)
                 {
                     var label = modeKey == "gyro" ? "Gyro" : (modeKey == "left" ? "Left pad" : "Right pad");
                     var current = _modeValues.ContainsKey(modeKey) ? _modeValues[modeKey] : "Off";
+
+                    var row = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
                     var btn = new Button
                     {
                         Tag = modeKey,
                         Style = (Style)Application.Current.Resources["PillButtonStyle"],
-                        Margin = new Thickness(0, 0, 0, 8),
                         HorizontalAlignment = HorizontalAlignment.Stretch,
                         HorizontalContentAlignment = HorizontalAlignment.Left,
-                        Padding = new Thickness(16, 12, 16, 12)
+                        Padding = new Thickness(16, 12, 16, 12),
+                        Margin = new Thickness(0, 0, 8, 0)
                     };
                     var panel = new StackPanel();
                     panel.Children.Add(new TextBlock
@@ -1352,7 +1766,26 @@ namespace MistMapper.GameBarWidget
                     panel.Children.Add(new TextBlock { Text = FormatModeLabel(current), FontSize = 15 });
                     btn.Content = panel;
                     btn.Click += ModePicker_Click;
-                    EditCategoryContent.Children.Add(btn);
+                    Grid.SetColumn(btn, 0);
+                    row.Children.Add(btn);
+
+                    var cog = new Button
+                    {
+                        Content = "\u2699",
+                        Tag = modeKey,
+                        FontSize = 20,
+                        Width = 48,
+                        Height = 48,
+                        Padding = new Thickness(0),
+                        Style = (Style)Application.Current.Resources["PillButtonStyle"],
+                        VerticalAlignment = VerticalAlignment.Stretch
+                    };
+                    ToolTipService.SetToolTip(cog, "Advanced settings");
+                    cog.Click += AdvancedSettingsCog_Click;
+                    Grid.SetColumn(cog, 1);
+                    row.Children.Add(cog);
+
+                    EditCategoryContent.Children.Add(row);
                 }
             }
 
@@ -1499,10 +1932,14 @@ namespace MistMapper.GameBarWidget
                 return "Horizontal (Left & Right Pad)";
             if (key.Equals("trackpadSensitivityY", StringComparison.OrdinalIgnoreCase))
                 return "Vertical (Left & Right Pad)";
+            if (key.Equals("gyroSensitivity", StringComparison.OrdinalIgnoreCase))
+                return "Gyro ° Sensitivity";
             if (key.Equals("gyroSensitivityX", StringComparison.OrdinalIgnoreCase))
                 return "Horizontal (Yaw)";
             if (key.Equals("gyroSensitivityY", StringComparison.OrdinalIgnoreCase))
                 return "Vertical (Pitch)";
+            if (key.Equals("gyroDotsPer360", StringComparison.OrdinalIgnoreCase))
+                return "Dots Per 360°";
             if (key.Equals("invertStickX", StringComparison.OrdinalIgnoreCase))
                 return "Horizontal (both sticks)";
             if (key.Equals("invertStickY", StringComparison.OrdinalIgnoreCase))
@@ -2392,13 +2829,24 @@ namespace MistMapper.GameBarWidget
                 _modeValues["gyro"] = state.GetNamedString("gyro", "Off");
 
                 foreach (var key in new[] { "stickSensitivityX", "stickSensitivityY", "trackpadSensitivityX",
-                    "trackpadSensitivityY", "gyroSensitivityX", "gyroSensitivityY",
+                    "trackpadSensitivityY", "gyroSensitivity", "gyroSensitivityX", "gyroSensitivityY", "gyroDotsPer360",
                     "stickDeadzone", "trackpadDeadzone", "triggerDeadzone" })
                     _sensValues[key] = state.GetNamedNumber(key, _sensValues.ContainsKey(key) ? _sensValues[key] : 1.0);
 
                 foreach (var key in new[] { "invertStickX", "invertStickY", "invertTrackpadX",
                     "invertTrackpadY", "invertGyroX", "invertGyroY" })
                     _invertValues[key] = state.GetNamedBoolean(key, false);
+
+                _gyroButtonMode = state.GetNamedString("gyroButtonMode", "HoldToEnable");
+                _gyroButtonCombine = state.GetNamedString("gyroButtonCombine", "Any");
+                _gyroButtons.Clear();
+                if (state.ContainsKey("gyroButtons"))
+                {
+                    foreach (var item in state.GetNamedArray("gyroButtons"))
+                        _gyroButtons.Add(item.GetString());
+                }
+                ReadPadSettings(state, "leftTrackpadSettings", "left");
+                ReadPadSettings(state, "rightTrackpadSettings", "right");
 
                 _inputMap.Clear();
                 if (state.ContainsKey("inputMap"))

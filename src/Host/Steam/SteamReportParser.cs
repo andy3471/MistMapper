@@ -43,9 +43,13 @@ public static class SteamReportParser
         state.L4 = (b2 & 0x02) != 0;
         state.L5 = (b2 & 0x04) != 0;
         state.Lb = (b2 & 0x08) != 0;
+        // SDL TritonButtons: bit4 = RStick capacitive touch, bit5 = RPad touch, bit6 = RPad click.
+        state.RightStickTouch = (b2 & 0x10) != 0;
         state.RightTrackpadTouch = (b2 & 0x20) != 0;
         state.RightTrackpadClick = (b2 & 0x40) != 0;
 
+        // SDL TritonButtons byte5: bit0 = LStick touch, bit1 = LPad touch, bit2 = LPad click.
+        state.LeftStickTouch = (b3 & 0x01) != 0;
         state.LeftTrackpadTouch = (b3 & 0x02) != 0;
         state.LeftTrackpadClick = (b3 & 0x04) != 0;
 

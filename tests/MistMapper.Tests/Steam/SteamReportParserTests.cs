@@ -105,6 +105,20 @@ public sealed class SteamReportParserTests
         state.HasImu.Should().BeFalse();
     }
 
+    [Fact]
+    public void TryParse_reads_stick_capacitive_touch()
+    {
+        var buf = CreateReport();
+        buf[4] |= 0x10; // RightStickTouch
+        buf[5] |= 0x01; // LeftStickTouch
+
+        SteamReportParser.TryParse(buf, out var state).Should().BeTrue();
+        state.RightStickTouch.Should().BeTrue();
+        state.LeftStickTouch.Should().BeTrue();
+        state.RightTrackpadTouch.Should().BeFalse();
+        state.LeftTrackpadTouch.Should().BeFalse();
+    }
+
     static byte[] CreateReport(byte reportId = SteamReportParser.ReportState, int length = 30)
     {
         var buf = new byte[length];

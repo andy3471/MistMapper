@@ -23,8 +23,23 @@ public sealed class ControllerProfile
 
     public TrackpadMode LeftTrackpad { get; set; } = TrackpadMode.Off;
     public TrackpadMode RightTrackpad { get; set; } = TrackpadMode.Off;
+    public TrackpadSurfaceSettings LeftTrackpadSettings { get; set; } = new();
+    public TrackpadSurfaceSettings RightTrackpadSettings { get; set; } = new();
     public GyroMode Gyro { get; set; } = GyroMode.Off;
     public float GyroSensitivity { get; set; } = 1.0f;
+
+    /// <summary>
+    /// Inputs that enable/suppress/toggle gyro (PhysicalInput ids).
+    /// Empty = gyro always on when mode ≠ Off (Steam default).
+    /// </summary>
+    public List<string> GyroButtons { get; set; } = [];
+
+    public GyroButtonMode GyroButtonMode { get; set; } = GyroButtonMode.HoldToEnable;
+    public GyroButtonCombine GyroButtonCombine { get; set; } = GyroButtonCombine.Any;
+
+    /// <summary>Mouse pixels for one full 360° turn at 1× sensitivity (Steam natural angles).</summary>
+    public float GyroDotsPer360 { get; set; } = 6545f;
+
     public float StickDeadzone { get; set; } = 0.08f;
     public float TriggerDeadzone { get; set; } = 0.05f;
     public float TrackpadDeadzone { get; set; } = 0.02f;

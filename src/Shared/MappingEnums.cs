@@ -30,6 +30,10 @@ public enum PhysicalInput
     RightTrackpad,
     LeftTrackpadClick,
     RightTrackpadClick,
+    /// <summary>Capacitive touch on the left stick (not click).</summary>
+    LeftStickTouch,
+    /// <summary>Capacitive touch on the right stick (not click).</summary>
+    RightStickTouch,
     Gyro
 }
 
@@ -79,4 +83,31 @@ public enum GyroMode
     AsMouse,
     /// <summary>Gyro rates → virtual stick (Steam “Mouse Joystick” layer).</summary>
     AsMouseJoystick
+}
+
+/// <summary>How selected gyro buttons interact with gyro output (Steam Input).</summary>
+public enum GyroButtonMode
+{
+    /// <summary>Gyro runs only while any/all selected buttons are held.</summary>
+    HoldToEnable,
+    /// <summary>Gyro runs by default; holding buttons suppresses it.</summary>
+    HoldToSuppress,
+    /// <summary>Press toggles gyro on/off.</summary>
+    Toggle
+}
+
+/// <summary>How multiple gyro activation buttons combine.</summary>
+public enum GyroButtonCombine
+{
+    Any,
+    All
+}
+
+public enum TrackballFriction
+{
+    Off,
+    Low,
+    Medium,
+    High,
+    ExtraHigh
 }

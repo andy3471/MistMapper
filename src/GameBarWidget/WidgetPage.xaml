@@ -419,5 +419,81 @@
                 <StackPanel x:Name="RemapGrid"/>
             </ScrollViewer>
         </Grid>
+
+        <!-- ════════ ADVANCED SETTINGS (gyro / trackpad cog) ════════ -->
+        <Grid x:Name="AdvancedSettingsView" Visibility="Collapsed" Background="Transparent">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid Grid.Row="0" Margin="16,14,16,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Content="&#xE72B;" Click="AdvancedSettingsBack_Click"
+                        Style="{StaticResource PillIconButtonStyle}"
+                        Margin="0,0,12,0" VerticalAlignment="Top"
+                        ToolTipService.ToolTip="Back"/>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock x:Name="AdvancedSettingsTitle" Text="Settings" FontSize="20" FontWeight="SemiBold"
+                               Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"/>
+                    <TextBlock x:Name="AdvancedSettingsSubtitle" Text="B cancel · Save when done"
+                               FontSize="13" Margin="0,2,0,0"
+                               Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"/>
+                </StackPanel>
+            </Grid>
+            <ScrollViewer Grid.Row="1" Padding="16,8,16,12" VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="AdvancedSettingsContent"/>
+            </ScrollViewer>
+            <Grid Grid.Row="2" Margin="16,0,16,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="12"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Content="B Cancel" Click="AdvancedSettingsBack_Click"
+                        Style="{StaticResource PillButtonStyle}"
+                        HorizontalAlignment="Stretch" Padding="16,14"/>
+                <Button Grid.Column="2" x:Name="AdvancedSettingsSaveButton" Content="Save"
+                        Click="AdvancedSettingsSave_Click" HorizontalAlignment="Stretch" Padding="16,14"
+                        Style="{StaticResource PillAccentButtonStyle}"/>
+            </Grid>
+        </Grid>
+
+        <!-- ════════ LIST PICKER (mode / enum choices) ════════ -->
+        <Grid x:Name="ListPickerView" Visibility="Collapsed" Background="Transparent">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid Grid.Row="0" Margin="16,14,16,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Content="&#xE72B;" Click="ListPickerBack_Click"
+                        Style="{StaticResource PillIconButtonStyle}"
+                        Margin="0,0,12,0" VerticalAlignment="Top"
+                        ToolTipService.ToolTip="Back"/>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock x:Name="ListPickerTitle" Text="Choose" FontSize="20" FontWeight="SemiBold"
+                               Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"/>
+                    <TextBlock Text="A to select · B to cancel"
+                               FontSize="13" Margin="0,2,0,0"
+                               Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"/>
+                </StackPanel>
+            </Grid>
+            <ScrollViewer Grid.Row="1" Padding="16,8,16,12" VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="ListPickerContent"/>
+            </ScrollViewer>
+            <Grid Grid.Row="2" Margin="16,0,16,16">
+                <Button Content="B Cancel" Click="ListPickerBack_Click"
+                        Style="{StaticResource PillButtonStyle}"
+                        HorizontalAlignment="Stretch" Padding="16,14"/>
+            </Grid>
+        </Grid>
     </Grid>
 </Page>

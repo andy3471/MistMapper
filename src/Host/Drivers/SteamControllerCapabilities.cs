@@ -48,6 +48,8 @@ public static class SteamControllerCapabilities
         Add(PhysicalInput.RightStick, DriverInputKind.Stick);
         Add(PhysicalInput.LeftTrackpad, DriverInputKind.Trackpad, remappable: false);
         Add(PhysicalInput.RightTrackpad, DriverInputKind.Trackpad, remappable: false);
+        Add(PhysicalInput.LeftStickTouch, DriverInputKind.Digital, remappable: false, name: "LS Touch");
+        Add(PhysicalInput.RightStickTouch, DriverInputKind.Digital, remappable: false, name: "RS Touch");
         Add(PhysicalInput.LeftTrackpadClick, DriverInputKind.Digital, name: "L Pad Click");
         Add(PhysicalInput.RightTrackpadClick, DriverInputKind.Digital, name: "R Pad Click");
         Add(PhysicalInput.Gyro, DriverInputKind.Gyro, remappable: false);

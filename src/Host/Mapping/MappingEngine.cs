@@ -26,8 +26,12 @@ public sealed class MappingEngine
     float _mouseJoyY;
     long _mouseJoyLastTick;
     readonly Dictionary<string, (float X, float Y)> _padMouseLast = new(StringComparer.OrdinalIgnoreCase);
+    readonly Dictionary<string, (float Vx, float Vy)> _padTrackballVel = new(StringComparer.OrdinalIgnoreCase);
+    readonly Dictionary<string, (float X, float Y)> _padSmooth = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> _heldKeys = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> _heldMouse = new(StringComparer.OrdinalIgnoreCase);
+    bool _gyroToggleOn;
+    bool _gyroTogglePrevPressed;
 
     public MappingEngine(IKeyboardSink? keyboard = null, IMouseSink? mouse = null)
     {
@@ -59,8 +63,10 @@ public sealed class MappingEngine
 
         foreach (var (id, pressed) in frame.Digitals)
         {
-            // Trackpads themselves are mode-driven; clicks are remappable digitals.
-            if (id is "LeftTrackpad" or "RightTrackpad" or "Gyro") continue;
+            // Mode-driven / capacitive gates — not remappable digitals.
+            if (id is "LeftTrackpad" or "RightTrackpad" or "Gyro"
+                or "LeftStickTouch" or "RightStickTouch")
+                continue;
 
             // Steam / Guide is permanently locked to Xbox Guide (profile remap ignored).
             if (MappingLocks.IsLockedGuideInput(id))
@@ -92,10 +98,15 @@ public sealed class MappingEngine
             ApplyStick(profile.GetAction("RightStick"), sx, sy, ref outState);
         }
 
-        ApplyTrackpad(profile.LeftTrackpad, frame.GetDigital("LeftTrackpad"), frame, "LeftTrackpad", ref outState, ref buttons, profile);
-        ApplyTrackpad(profile.RightTrackpad, frame.GetDigital("RightTrackpad"), frame, "RightTrackpad", ref outState, ref buttons, profile);
+        ApplyTrackpad(profile.LeftTrackpad, frame.GetDigital("LeftTrackpad"), frame, "LeftTrackpad",
+            profile.LeftTrackpadSettings, ref outState, ref buttons, profile);
+        ApplyTrackpad(profile.RightTrackpad, frame.GetDigital("RightTrackpad"), frame, "RightTrackpad",
+            profile.RightTrackpadSettings, ref outState, ref buttons, profile);
+        TickTrackballCoast(profile);
 
-        if (profile.Gyro != GyroMode.Off && frame.TryGetVector("Gyro", out var gx, out var gy))
+        if (profile.Gyro != GyroMode.Off
+            && IsGyroActive(profile, frame)
+            && frame.TryGetVector("Gyro", out var gx, out var gy))
             ApplyGyro(profile, gx, gy, ref outState);
 
         if (mouseJoyActive)
@@ -240,12 +251,18 @@ public sealed class MappingEngine
     }
 
     void ApplyTrackpad(TrackpadMode mode, bool touching, InputFrame frame, string id,
-        ref Xbox360InputState state, ref uint buttons, ControllerProfile profile)
+        TrackpadSurfaceSettings? surface, ref Xbox360InputState state, ref uint buttons, ControllerProfile profile)
     {
+        surface ??= new TrackpadSurfaceSettings();
         if (mode == TrackpadMode.Off) return;
+
         if (!touching)
         {
             _padMouseLast.Remove(id);
+            _padSmooth.Remove(id);
+            // Trackball coast continues via TickTrackballCoast when enabled.
+            if (!surface.TrackballMode || mode is not (TrackpadMode.AsMouse or TrackpadMode.AsMouseJoystick))
+                _padTrackballVel.Remove(id);
             return;
         }
 
@@ -259,6 +276,7 @@ public sealed class MappingEngine
 
         float ax = Math.Abs(nx) < dz ? 0 : nx;
         float ay = Math.Abs(ny) < dz ? 0 : ny;
+        (ax, ay) = Rotate2D(ax, ay, surface.RotationDegrees);
         ax *= sensX * (invX ? -1 : 1);
         ay *= sensY * (invY ? -1 : 1);
 
@@ -283,26 +301,10 @@ public sealed class MappingEngine
                 if (x > thresh) buttons |= (uint)Xbox360Buttons.DpadRight;
                 break;
             case TrackpadMode.AsMouse:
-                if (!_padMouseLast.TryGetValue(id, out var last))
-                {
-                    _padMouseLast[id] = (nx, ny);
-                    break;
-                }
-                _padMouseLast[id] = (nx, ny);
-                _mouseAccumX += (nx - last.X) * TrackpadMouseSensitivity * sensX * (invX ? -1 : 1);
-                _mouseAccumY += -(ny - last.Y) * TrackpadMouseSensitivity * sensY * (invY ? -1 : 1);
+                ApplyRelativePadMouse(id, nx, ny, surface, sensX, sensY, invX, invY, mouseJoystick: false);
                 break;
             case TrackpadMode.AsMouseJoystick:
-                if (!_padMouseLast.TryGetValue(id, out var mjLast))
-                {
-                    _padMouseLast[id] = (nx, ny);
-                    break;
-                }
-                _padMouseLast[id] = (nx, ny);
-                // Relative finger motion → virtual right-stick tip (not OS mouse).
-                AddMouseJoystick(
-                    (nx - mjLast.X) * MouseJoystickPadGain * sensX * (invX ? -1 : 1),
-                    (ny - mjLast.Y) * MouseJoystickPadGain * sensY * (invY ? -1 : 1));
+                ApplyRelativePadMouse(id, nx, ny, surface, sensX, sensY, invX, invY, mouseJoystick: true);
                 break;
             case TrackpadMode.FlickStick:
                 if (Math.Abs(ax) > 0.5f || Math.Abs(ay) > 0.5f)
@@ -331,10 +333,154 @@ public sealed class MappingEngine
         }
     }
 
+    void ApplyRelativePadMouse(string id, float nx, float ny, TrackpadSurfaceSettings surface,
+        float sensX, float sensY, bool invX, bool invY, bool mouseJoystick)
+    {
+        if (!_padMouseLast.TryGetValue(id, out var last))
+        {
+            _padMouseLast[id] = (nx, ny);
+            return;
+        }
+        _padMouseLast[id] = (nx, ny);
+
+        float dx = nx - last.X;
+        float dy = ny - last.Y;
+        (dx, dy) = Rotate2D(dx, dy, surface.RotationDegrees);
+        dx = SmoothAxis(id, "x", dx, surface.Smoothing);
+        dy = SmoothAxis(id, "y", dy, surface.Smoothing);
+
+        float outX = dx * (mouseJoystick ? MouseJoystickPadGain : TrackpadMouseSensitivity) * sensX * (invX ? -1 : 1);
+        float outY = dy * (mouseJoystick ? MouseJoystickPadGain : TrackpadMouseSensitivity) * sensY * (invY ? -1 : 1);
+
+        if (surface.TrackballMode)
+            _padTrackballVel[id] = (outX, outY);
+
+        if (mouseJoystick)
+            AddMouseJoystick(outX, outY);
+        else
+        {
+            _mouseAccumX += outX;
+            _mouseAccumY += -outY;
+        }
+    }
+
+    float SmoothAxis(string id, string axis, float sample, float smoothing)
+    {
+        // Steam-style: higher smoothing → heavier EMA. 0 = pass-through.
+        float t = Math.Clamp(smoothing, 0f, 100f) / 100f;
+        if (t <= 0.001f) return sample;
+        string key = id + ":" + axis;
+        float alpha = 1f - t * 0.85f;
+        if (!_padSmooth.TryGetValue(key, out var prev))
+        {
+            _padSmooth[key] = (sample, sample);
+            return sample;
+        }
+        float filtered = prev.X + (sample - prev.X) * alpha;
+        _padSmooth[key] = (filtered, filtered);
+        return filtered;
+    }
+
+    void TickTrackballCoast(ControllerProfile profile)
+    {
+        foreach (var id in _padTrackballVel.Keys.ToList())
+        {
+            // Still touching — velocity was refreshed this frame; don't coast yet.
+            if (_padMouseLast.ContainsKey(id))
+                continue;
+
+            var surface = id.Equals("LeftTrackpad", StringComparison.OrdinalIgnoreCase)
+                ? profile.LeftTrackpadSettings
+                : profile.RightTrackpadSettings;
+            if (surface is null || !surface.TrackballMode)
+            {
+                _padTrackballVel.Remove(id);
+                continue;
+            }
+
+            var mode = id.Equals("LeftTrackpad", StringComparison.OrdinalIgnoreCase)
+                ? profile.LeftTrackpad
+                : profile.RightTrackpad;
+            if (mode is not (TrackpadMode.AsMouse or TrackpadMode.AsMouseJoystick))
+            {
+                _padTrackballVel.Remove(id);
+                continue;
+            }
+
+            var (vx, vy) = _padTrackballVel[id];
+            float friction = TrackballFrictionPerSec(surface.TrackballFriction);
+            float vScale = Math.Clamp(surface.VerticalFrictionScale, 0.1f, 5f);
+            float decayX = MathF.Exp(-friction * 0.008f); // ~125 Hz frame assumption
+            float decayY = MathF.Exp(-friction * vScale * 0.008f);
+            vx *= decayX;
+            vy *= decayY;
+            if (Math.Abs(vx) < 0.002f && Math.Abs(vy) < 0.002f)
+            {
+                _padTrackballVel.Remove(id);
+                continue;
+            }
+            _padTrackballVel[id] = (vx, vy);
+
+            if (mode == TrackpadMode.AsMouseJoystick)
+                AddMouseJoystick(vx, vy);
+            else
+            {
+                _mouseAccumX += vx;
+                _mouseAccumY += -vy;
+            }
+        }
+    }
+
+    static float TrackballFrictionPerSec(TrackballFriction f) => f switch
+    {
+        TrackballFriction.Off => 0.5f,
+        TrackballFriction.Low => 3f,
+        TrackballFriction.Medium => 8f,
+        TrackballFriction.High => 14f,
+        TrackballFriction.ExtraHigh => 22f,
+        _ => 8f
+    };
+
+    static (float X, float Y) Rotate2D(float x, float y, float degrees)
+    {
+        if (Math.Abs(degrees) < 0.01f) return (x, y);
+        float rad = degrees * (MathF.PI / 180f);
+        float c = MathF.Cos(rad);
+        float s = MathF.Sin(rad);
+        return (x * c - y * s, x * s + y * c);
+    }
+
+    bool IsGyroActive(ControllerProfile profile, InputFrame frame)
+    {
+        var buttons = profile.GyroButtons;
+        if (buttons is null || buttons.Count == 0)
+            return true; // Steam: no buttons selected → always on
+
+        bool pressed = profile.GyroButtonCombine == GyroButtonCombine.All
+            ? buttons.All(id => frame.GetDigital(id))
+            : buttons.Any(id => frame.GetDigital(id));
+
+        switch (profile.GyroButtonMode)
+        {
+            case GyroButtonMode.HoldToEnable:
+                return pressed;
+            case GyroButtonMode.HoldToSuppress:
+                return !pressed;
+            case GyroButtonMode.Toggle:
+                if (pressed && !_gyroTogglePrevPressed)
+                    _gyroToggleOn = !_gyroToggleOn;
+                _gyroTogglePrevPressed = pressed;
+                return _gyroToggleOn;
+            default:
+                return true;
+        }
+    }
+
     void ApplyGyro(ControllerProfile profile, float ngx, float ngy, ref Xbox360InputState state)
     {
-        float sx = profile.GyroSensitivityX * profile.GyroSensitivity;
-        float sy = profile.GyroSensitivityY * profile.GyroSensitivity;
+        float calib = Math.Clamp(profile.GyroDotsPer360, 500f, 20000f) / 6545f;
+        float sx = profile.GyroSensitivityX * profile.GyroSensitivity * calib;
+        float sy = profile.GyroSensitivityY * profile.GyroSensitivity * calib;
         short gx = ClampToShort(ngy * 32767f * sx * (profile.InvertGyroX ? -1 : 1));
         short gy = ClampToShort(-ngx * 32767f * sy * (profile.InvertGyroY ? -1 : 1));
         if (profile.Gyro == GyroMode.AsRightStick)
@@ -369,6 +515,10 @@ public sealed class MappingEngine
     {
         ResetMouseJoystick();
         _padMouseLast.Clear();
+        _padTrackballVel.Clear();
+        _padSmooth.Clear();
+        _gyroToggleOn = false;
+        _gyroTogglePrevPressed = false;
         foreach (var token in _heldKeys.ToList())
             ReleaseKeyToken(token);
         _heldKeys.Clear();

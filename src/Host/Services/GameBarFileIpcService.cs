@@ -11,7 +11,11 @@ namespace MistMapper.Host.Services;
 /// </summary>
 public sealed class GameBarFileIpcService : IDisposable
 {
-    static readonly JsonSerializerOptions CaseInsensitiveJson = new() { PropertyNameCaseInsensitive = true };
+    static readonly JsonSerializerOptions CaseInsensitiveJson = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
     const string PackageNamePrefix = "MistMapper.GameBar_";
     const string RequestFile = "widget-request.txt";
     const string ResponseFile = "widget-response.txt";
@@ -442,6 +446,14 @@ public sealed class GameBarFileIpcService : IDisposable
             writer.WriteString("leftTrackpad", active.LeftTrackpad.ToString());
             writer.WriteString("rightTrackpad", active.RightTrackpad.ToString());
             writer.WriteString("gyro", active.Gyro.ToString());
+            writer.WriteNumber("gyroSensitivity", active.GyroSensitivity);
+            writer.WriteNumber("gyroDotsPer360", active.GyroDotsPer360);
+            writer.WriteString("gyroButtonMode", active.GyroButtonMode.ToString());
+            writer.WriteString("gyroButtonCombine", active.GyroButtonCombine.ToString());
+            writer.WriteStartArray("gyroButtons");
+            foreach (var b in active.GyroButtons)
+                writer.WriteStringValue(b);
+            writer.WriteEndArray();
 
             writer.WriteNumber("stickSensitivityX", active.StickSensitivityX);
             writer.WriteNumber("stickSensitivityY", active.StickSensitivityY);
@@ -458,6 +470,9 @@ public sealed class GameBarFileIpcService : IDisposable
             writer.WriteBoolean("invertTrackpadY", active.InvertTrackpadY);
             writer.WriteBoolean("invertGyroX", active.InvertGyroX);
             writer.WriteBoolean("invertGyroY", active.InvertGyroY);
+
+            WriteTrackpadSettings(writer, "leftTrackpadSettings", active.LeftTrackpadSettings);
+            WriteTrackpadSettings(writer, "rightTrackpadSettings", active.RightTrackpadSettings);
 
             writer.WriteStartArray("controllers");
             foreach (var c in status.Controllers.OrderBy(x => x.Order))
@@ -539,6 +554,17 @@ public sealed class GameBarFileIpcService : IDisposable
                 writer.WriteString(paddle, active.GetAction(paddle).ToDisplayString());
             writer.WriteEndObject();
 
+            writer.WriteEndObject();
+        }
+
+        static void WriteTrackpadSettings(Utf8JsonWriter writer, string name, TrackpadSurfaceSettings s)
+        {
+            writer.WriteStartObject(name);
+            writer.WriteBoolean("trackballMode", s.TrackballMode);
+            writer.WriteString("trackballFriction", s.TrackballFriction.ToString());
+            writer.WriteNumber("verticalFrictionScale", s.VerticalFrictionScale);
+            writer.WriteNumber("smoothing", s.Smoothing);
+            writer.WriteNumber("rotationDegrees", s.RotationDegrees);
             writer.WriteEndObject();
         }
 

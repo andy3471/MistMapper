@@ -129,6 +129,13 @@ public sealed class SensitivityPayload
     public float? GyroSensitivity { get; set; }
     public float? GyroSensitivityX { get; set; }
     public float? GyroSensitivityY { get; set; }
+    public float? GyroDotsPer360 { get; set; }
+    public string? GyroButtonMode { get; set; }
+    public string? GyroButtonCombine { get; set; }
+    /// <summary>When non-null, replaces the full gyro activation button list.</summary>
+    public List<string>? GyroButtons { get; set; }
+    public TrackpadSurfaceSettings? LeftTrackpadSettings { get; set; }
+    public TrackpadSurfaceSettings? RightTrackpadSettings { get; set; }
     public bool? InvertStickX { get; set; }
     public bool? InvertStickY { get; set; }
     public bool? InvertTrackpadX { get; set; }

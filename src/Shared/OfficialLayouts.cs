@@ -109,6 +109,9 @@ public static class OfficialLayouts
         p.RightTrackpad = TrackpadMode.AsMouseJoystick;
         p.Gyro = GyroMode.AsMouseJoystick;
         p.GyroSensitivity = 1.2f;
+        p.GyroButtons = ["RightTrackpad", "RightStickTouch"];
+        p.GyroButtonMode = GyroButtonMode.HoldToEnable;
+        p.GyroButtonCombine = GyroButtonCombine.Any;
         p.TrackpadSensitivityX = 1.2f;
         p.TrackpadSensitivityY = 1.2f;
         p.SetAction("RightTrackpadClick", OutputAction.FromXbox(XboxOutput.RsClick));

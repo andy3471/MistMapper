@@ -72,6 +72,27 @@ public sealed class BridgeServiceLoopTests : IDisposable
         _bridge.Status.State.Should().Be(BridgeRunState.PausedSteam);
     }
 
+    [Fact]
+    public void GameBar_open_sets_override_active_in_status()
+    {
+        var gameBar = new TestGameBarState();
+        using var bridge = new BridgeService(
+            _profiles,
+            _steam,
+            _session,
+            _foreground,
+            gameBar,
+            drivers: new DriverRegistry([_driver]),
+            viiperHealth: _viiperHealth,
+            viiperFactory: () => _viiperClient);
+
+        bridge.Status.GameBarOverrideActive.Should().BeFalse();
+        gameBar.SetOpen(true);
+        bridge.Status.GameBarOverrideActive.Should().BeTrue();
+        gameBar.SetOpen(false);
+        bridge.Status.GameBarOverrideActive.Should().BeFalse();
+    }
+
     static async Task<bool> WaitUntilAsync(Func<bool> predicate, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
