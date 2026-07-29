@@ -54,11 +54,41 @@ public sealed class BridgeServiceTests : IDisposable
         var profile = _profiles.CreateFromLayout(OfficialLayouts.Desktop, "For game");
         _profiles.BindToGame(profile.Id, "game.exe");
 
-        _foreground.Set("game.exe", @"D:\Games\game.exe");
+        _foreground.Set("game.exe", @"D:\Games\game.exe", "Cool Game");
 
         _bridge.Status.ActiveProfileId.Should().Be(profile.Id);
         _bridge.Status.ActiveProfileSource.Should().Be(nameof(ActiveProfileSource.GameRule));
         _bridge.Status.CurrentGameExe.Should().Be("game.exe");
+        _bridge.Status.CurrentGameName.Should().Be("Cool Game");
+    }
+
+    [Fact]
+    public void EnsureLayoutForCurrentGame_clones_and_binds_once()
+    {
+        var original = _profiles.ActiveProfile;
+        _foreground.Set("adventure.exe", @"D:\Games\adventure.exe", "Adventure");
+
+        var first = _bridge.EnsureLayoutForCurrentGame(original.Id);
+        first.Should().NotBe(original.Id);
+
+        var bound = _profiles.FindBindingForGame("adventure.exe", @"D:\Games\adventure.exe");
+        bound.Should().NotBeNull();
+        bound!.ProfileId.Should().Be(first);
+        bound.DisplayName.Should().Be("Adventure");
+        _bridge.Status.ActiveProfileId.Should().Be(first);
+        _bridge.Status.ActiveProfileSource.Should().Be(nameof(ActiveProfileSource.GameRule));
+
+        var second = _bridge.EnsureLayoutForCurrentGame(original.Id);
+        second.Should().Be(first);
+        _profiles.GetUserProfiles().Count(p => p.Name.StartsWith("Adventure", StringComparison.Ordinal))
+            .Should().Be(1);
+    }
+
+    [Fact]
+    public void EnsureLayoutForCurrentGame_noop_without_foreground_game()
+    {
+        var id = _profiles.ActiveProfile.Id;
+        _bridge.EnsureLayoutForCurrentGame(id).Should().Be(id);
     }
 
     [Fact]

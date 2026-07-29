@@ -41,6 +41,7 @@ public sealed class BridgeStatus
     public string ActiveDriverName { get; set; } = "";
     public string CurrentGameExe { get; set; } = "";
     public string CurrentGamePath { get; set; } = "";
+    public string CurrentGameName { get; set; } = "";
     public List<string> PressedInputs { get; set; } = [];
     public List<DependencyStatus> Dependencies { get; set; } = [];
     public string Message { get; set; } = "";

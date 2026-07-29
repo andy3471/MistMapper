@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using MistMapper.Shared;
@@ -26,6 +27,8 @@ public sealed class GameBarFileIpcService : IDisposable
     string? _lastRequestId;
     byte[]? _lastStateBytes;
     bool _dirty = true;
+    string? _lastIconGamePath;
+    string _lastIconToken = "";
 
     public GameBarFileIpcService(ProfileService profiles, BridgeService bridge)
     {
@@ -165,6 +168,7 @@ public sealed class GameBarFileIpcService : IDisposable
                     throw new InvalidOperationException("Steam/Guide is locked to Xbox Guide.");
                 if (!Enum.TryParse<XboxOutput>(bits[2], true, out var xbox))
                     throw new ArgumentException("Invalid xbox");
+                bits[0] = _bridge.EnsureLayoutForCurrentGame(bits[0]);
                 _profiles.Remap(bits[0], phys, xbox);
                 return null;
             }
@@ -178,6 +182,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 if (bits.Length < 3) throw new ArgumentException("Invalid remapAction payload");
                 if (bits[1].Equals("Steam", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Steam/Guide is locked to Xbox Guide.");
+                bits[0] = _bridge.EnsureLayoutForCurrentGame(bits[0]);
                 var action = ParseAction(bits);
                 _profiles.RemapAction(bits[0], bits[1], action);
                 return null;
@@ -194,6 +199,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 if (bits.Length < 3) throw new ArgumentException("Invalid setTrackpadMode payload");
                 if (!Enum.TryParse<TrackpadMode>(bits[2], true, out var mode))
                     throw new ArgumentException("Invalid trackpad mode");
+                bits[0] = _bridge.EnsureLayoutForCurrentGame(bits[0]);
                 _profiles.SetTrackpad(bits[0], bits[1].Equals("left", StringComparison.OrdinalIgnoreCase), mode);
                 return null;
             }
@@ -205,6 +211,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 if (bits.Length < 2) throw new ArgumentException("Invalid setGyroMode payload");
                 if (!Enum.TryParse<GyroMode>(bits[1], true, out var mode))
                     throw new ArgumentException("Invalid gyro mode");
+                bits[0] = _bridge.EnsureLayoutForCurrentGame(bits[0]);
                 _profiles.SetGyro(bits[0], mode);
                 return null;
             }
@@ -226,6 +233,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 var bits = payload.Split('\t');
                 if (bits.Length < 2)
                     throw new ArgumentException("profileId and layoutId required");
+                bits[0] = _bridge.EnsureLayoutForCurrentGame(bits[0]);
                 _profiles.ApplyLayout(bits[0], bits[1]);
                 return null;
             }
@@ -237,6 +245,9 @@ public sealed class GameBarFileIpcService : IDisposable
                 if (bits.Length < 2 || string.IsNullOrWhiteSpace(bits[1]))
                     throw new ArgumentException("profileId and name required");
                 var created = _profiles.SaveAsProfile(bits[0], bits[1]);
+                var exe = _bridge.Status.CurrentGameExe;
+                if (!string.IsNullOrWhiteSpace(exe) && _profiles.FindBindingForGame(exe, _bridge.Status.CurrentGamePath) is null)
+                    _profiles.BindToGame(created.Id, exe, null, _bridge.Status.CurrentGameName);
                 _bridge.SetActiveProfileManual(created.Id);
                 return null;
             }
@@ -292,6 +303,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 // JSON payload matching SensitivityPayload
                 var p = JsonSerializer.Deserialize<SensitivityPayload>(payload, CaseInsensitiveJson)
                     ?? throw new ArgumentException("Invalid sensitivity payload");
+                p.ProfileId = _bridge.EnsureLayoutForCurrentGame(p.ProfileId);
                 _profiles.SetSensitivity(p.ProfileId, p);
                 return null;
             }
@@ -354,6 +366,11 @@ public sealed class GameBarFileIpcService : IDisposable
             writer.WriteString("activeLayoutName", ProfileService.LayoutDisplayName(active.LayoutId));
             writer.WriteString("activeProfileSource", status.ActiveProfileSource);
             writer.WriteString("currentGameExe", status.CurrentGameExe ?? "");
+            writer.WriteString("currentGameName", status.CurrentGameName ?? "");
+            var (hasIcon, iconToken) = EnsureGameIcon(status.CurrentGamePath);
+            writer.WriteBoolean("hasGameIcon", hasIcon);
+            writer.WriteString("gameIconFile", hasIcon ? "current-game-icon.png" : "");
+            writer.WriteString("gameIconToken", iconToken);
             writer.WriteString("activeDriverId", status.ActiveDriverId ?? "");
             writer.WriteString("activeDriverName", status.ActiveDriverName ?? "");
 
@@ -460,6 +477,42 @@ public sealed class GameBarFileIpcService : IDisposable
         File.Move(tmp, path, overwrite: true);
         _lastStateBytes = bytes;
         _dirty = false;
+    }
+
+    (bool HasIcon, string Token) EnsureGameIcon(string? gamePath)
+    {
+        if (_localStatePath is null)
+            return (false, "");
+
+        var iconPath = Path.Combine(_localStatePath, "current-game-icon.png");
+        if (string.IsNullOrWhiteSpace(gamePath) || !File.Exists(gamePath))
+        {
+            _lastIconGamePath = null;
+            _lastIconToken = "";
+            try
+            {
+                if (File.Exists(iconPath))
+                    File.Delete(iconPath);
+            }
+            catch { /* ignore */ }
+            return (false, "");
+        }
+
+        if (string.Equals(_lastIconGamePath, gamePath, StringComparison.OrdinalIgnoreCase)
+            && File.Exists(iconPath)
+            && !string.IsNullOrEmpty(_lastIconToken))
+            return (true, _lastIconToken);
+
+        if (!GameIconExtractor.TryWritePng(gamePath, iconPath) || !File.Exists(iconPath))
+        {
+            _lastIconGamePath = null;
+            _lastIconToken = "";
+            return (false, "");
+        }
+
+        _lastIconGamePath = gamePath;
+        _lastIconToken = DateTime.UtcNow.Ticks.ToString(CultureInfo.InvariantCulture);
+        return (true, _lastIconToken);
     }
 
     public void Dispose() => _timer.Dispose();

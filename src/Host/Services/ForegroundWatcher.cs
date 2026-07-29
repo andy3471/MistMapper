@@ -10,6 +10,7 @@ public sealed class ForegroundWatcher : IDisposable, IForegroundState
     readonly object _gate = new();
     string _exe = "";
     string _path = "";
+    string _displayName = "";
 
     public event Action? Changed;
 
@@ -21,6 +22,11 @@ public sealed class ForegroundWatcher : IDisposable, IForegroundState
     public string Path
     {
         get { lock (_gate) return _path; }
+    }
+
+    public string DisplayName
+    {
+        get { lock (_gate) return _displayName; }
     }
 
     public ForegroundWatcher(int intervalMs = 1000)
@@ -48,15 +54,20 @@ public sealed class ForegroundWatcher : IDisposable, IForegroundState
             // Ignore our own host / Game Bar chrome so profile doesn't flap.
             if (IsIgnored(exe)) return;
 
+            var title = GetWindowTitle(hwnd);
+            var display = GameDisplayName.Resolve(path, exe, title);
+
             bool changed;
             lock (_gate)
             {
-                changed = !string.Equals(_exe, exe, StringComparison.OrdinalIgnoreCase) ||
-                          !string.Equals(_path, path, StringComparison.OrdinalIgnoreCase);
+                changed = !string.Equals(_exe, exe, StringComparison.OrdinalIgnoreCase)
+                          || !string.Equals(_path, path, StringComparison.OrdinalIgnoreCase)
+                          || !string.Equals(_displayName, display, StringComparison.Ordinal);
                 if (changed)
                 {
                     _exe = exe;
                     _path = path;
+                    _displayName = display;
                 }
             }
             if (changed) Changed?.Invoke();
@@ -65,6 +76,13 @@ public sealed class ForegroundWatcher : IDisposable, IForegroundState
         {
             // access denied / exited process
         }
+    }
+
+    static string GetWindowTitle(nint hwnd)
+    {
+        var buffer = new char[512];
+        int len = GetWindowText(hwnd, buffer, buffer.Length);
+        return len > 0 ? new string(buffer, 0, len) : "";
     }
 
     static bool IsIgnored(string exe)
@@ -83,6 +101,9 @@ public sealed class ForegroundWatcher : IDisposable, IForegroundState
 
     [DllImport("user32.dll")]
     static extern uint GetWindowThreadProcessId(nint hWnd, out uint lpdwProcessId);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    static extern int GetWindowText(nint hWnd, [Out] char[] lpString, int nMaxCount);
 
     public void Dispose() => _timer.Dispose();
 }

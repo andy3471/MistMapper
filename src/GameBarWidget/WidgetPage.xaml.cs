@@ -5,10 +5,12 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Gaming.XboxGameBar;
 using Windows.Data.Json;
+using Windows.Storage;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Controls.Primitives;
 using Windows.UI.Xaml.Input;
+using Windows.UI.Xaml.Media.Imaging;
 using Windows.UI.Xaml.Navigation;
 
 namespace MistMapper.GameBarWidget
@@ -129,6 +131,7 @@ namespace MistMapper.GameBarWidget
         string _controllerModel = ""; // "" when disconnected; "sc1" / "sc2" when connected
         bool _controllerConnected;
         string _lastLayoutKey = "";
+        string _lastGameIconToken = "";
         string _lastInputMapKey = "";
         readonly Dictionary<string, string> _inputMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, bool> _remappable = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
@@ -169,6 +172,39 @@ namespace MistMapper.GameBarWidget
             HighlightViewEditTabs();
             ApplyControllerOutline();
             PreviewKeyDown += WidgetPage_PreviewKeyDown;
+            Loaded += (_, __) =>
+            {
+                var core = Window.Current?.CoreWindow;
+                if (core == null) return;
+                core.KeyDown -= CoreWindow_KeyDown;
+                core.KeyDown += CoreWindow_KeyDown;
+            };
+            Unloaded += (_, __) =>
+            {
+                var core = Window.Current?.CoreWindow;
+                if (core != null)
+                    core.KeyDown -= CoreWindow_KeyDown;
+            };
+        }
+
+        void CoreWindow_KeyDown(Windows.UI.Core.CoreWindow sender, Windows.UI.Core.KeyEventArgs e)
+        {
+            // Earlier than PreviewKeyDown — still won't beat Game Bar's LT/RT dismiss.
+            // Do not handle D-pad left/right: Game Bar uses those to switch widgets.
+            if (FocusManager.GetFocusedElement() is TextBox) return;
+            var key = e.VirtualKey;
+            if (key == Windows.System.VirtualKey.GamepadY)
+            { CycleViewEditTab(1); e.Handled = true; }
+            else if (key == Windows.System.VirtualKey.GamepadLeftShoulder)
+            { CycleEditCategory(-1); e.Handled = true; }
+            else if (key == Windows.System.VirtualKey.GamepadRightShoulder)
+            { CycleEditCategory(1); e.Handled = true; }
+            else if (key == Windows.System.VirtualKey.GamepadLeftTrigger
+                     || key == Windows.System.VirtualKey.GamepadRightTrigger)
+            {
+                // Swallow if we see them so Game Bar is less likely to dismiss the widget.
+                e.Handled = true;
+            }
         }
 
         protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -251,13 +287,55 @@ namespace MistMapper.GameBarWidget
             if (idx < 0) idx = 0;
             idx = (idx + delta + names.Count) % names.Count;
             _activeEditCategory = names[idx];
-            RebuildEditCategoryTabs();
+
+            // Update in place — don't rebuild tabs (that resets the horizontal scroll).
+            foreach (var child in EditCategoryTabs.Children)
+            {
+                if (child is Button b)
+                    SetTabActive(b, (b.Tag as string) == _activeEditCategory);
+            }
+            RebuildEditCategoryContent();
+            BringActiveCategoryTabIntoView();
+        }
+
+        void BringActiveCategoryTabIntoView()
+        {
+            Button active = null;
+            foreach (var child in EditCategoryTabs.Children)
+            {
+                if (child is Button b && string.Equals(b.Tag as string, _activeEditCategory, StringComparison.Ordinal))
+                {
+                    active = b;
+                    break;
+                }
+            }
+            if (active == null || EditCategoryTabsScroller == null) return;
+
+            EditCategoryTabs.UpdateLayout();
+            EditCategoryTabsScroller.UpdateLayout();
+
+            var transform = active.TransformToVisual(EditCategoryTabs);
+            var bounds = transform.TransformBounds(new Windows.Foundation.Rect(0, 0, active.ActualWidth, active.ActualHeight));
+            var viewport = EditCategoryTabsScroller.ViewportWidth;
+            if (viewport <= 0 || double.IsNaN(viewport)) return;
+
+            var offset = EditCategoryTabsScroller.HorizontalOffset;
+            double? target = null;
+            const double pad = 8;
+            if (bounds.Left < offset + pad)
+                target = Math.Max(0, bounds.Left - pad);
+            else if (bounds.Right > offset + viewport - pad)
+                target = Math.Max(0, bounds.Right - viewport + pad);
+
+            if (target.HasValue)
+                EditCategoryTabsScroller.ChangeView(target.Value, null, null, disableAnimation: false);
         }
 
         bool IsOverlayOpen() =>
             RemapView.Visibility == Visibility.Visible
             || BrowseLayoutView.Visibility == Visibility.Visible
-            || PreviewLayoutView.Visibility == Visibility.Visible;
+            || PreviewLayoutView.Visibility == Visibility.Visible
+            || SettingsView.Visibility == Visibility.Visible;
 
         void HighlightViewEditTabs()
         {
@@ -309,11 +387,16 @@ namespace MistMapper.GameBarWidget
                 await RefreshAsync(force: true);
         }
 
-        async void BindGame_Click(object sender, RoutedEventArgs e)
+        void Settings_Click(object sender, RoutedEventArgs e)
         {
-            var resp = await IpcClient.SendAsync("bindToCurrentGame", "");
-            StatusText.Text = resp.IsOk ? "Bound layout to current game." : (resp.Error ?? "Bind failed");
-            await RefreshAsync(force: true);
+            MainView.Visibility = Visibility.Collapsed;
+            SettingsView.Visibility = Visibility.Visible;
+        }
+
+        void SettingsBack_Click(object sender, RoutedEventArgs e)
+        {
+            SettingsView.Visibility = Visibility.Collapsed;
+            MainView.Visibility = Visibility.Visible;
         }
 
         async void SaveAs_Click(object sender, RoutedEventArgs e)
@@ -389,10 +472,11 @@ namespace MistMapper.GameBarWidget
                     var btn = new Button
                     {
                         Tag = layout.Id,
+                        Style = (Style)Application.Current.Resources["PillButtonStyle"],
                         HorizontalAlignment = HorizontalAlignment.Stretch,
                         HorizontalContentAlignment = HorizontalAlignment.Left,
-                        Padding = new Thickness(12, 10, 12, 10),
-                        Margin = new Thickness(0, 0, 0, 6)
+                        Padding = new Thickness(18, 14, 18, 14),
+                        Margin = new Thickness(0, 0, 0, 10)
                     };
                     var panel = new StackPanel();
                     panel.Children.Add(new TextBlock { Text = layout.Name, FontSize = 15, FontWeight = Windows.UI.Text.FontWeights.SemiBold });
@@ -448,13 +532,14 @@ namespace MistMapper.GameBarWidget
                     {
                         Content = name,
                         Tag = name,
+                        Style = (Style)Application.Current.Resources["PillButtonStyle"],
                         HorizontalAlignment = HorizontalAlignment.Stretch,
                         HorizontalContentAlignment = HorizontalAlignment.Left,
-                        Padding = new Thickness(12, 10, 12, 10),
-                        Margin = new Thickness(0, 0, 0, 6)
+                        Padding = new Thickness(18, 14, 18, 14),
+                        Margin = new Thickness(0, 0, 0, 10)
                     };
                     if (string.Equals(name, _selectedProfileName, StringComparison.OrdinalIgnoreCase))
-                        btn.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
+                        btn.Style = (Style)Application.Current.Resources["PillAccentButtonStyle"];
                     btn.Click += async (s, _) =>
                     {
                         if (!(s is Button b) || !(b.Tag is string profileName)) return;
@@ -617,6 +702,16 @@ namespace MistMapper.GameBarWidget
                 return;
 
             var key = e.Key;
+            if (SettingsView.Visibility == Visibility.Visible)
+            {
+                if (key == Windows.System.VirtualKey.GamepadB || key == Windows.System.VirtualKey.Escape)
+                {
+                    SettingsBack_Click(this, new RoutedEventArgs());
+                    e.Handled = true;
+                }
+                return;
+            }
+
             if (RemapView.Visibility == Visibility.Visible)
             {
                 if (key == Windows.System.VirtualKey.GamepadB || key == Windows.System.VirtualKey.Escape)
@@ -656,14 +751,7 @@ namespace MistMapper.GameBarWidget
                 return;
             }
 
-            if (key == Windows.System.VirtualKey.GamepadLeftTrigger)
-            { CycleViewEditTab(-1); e.Handled = true; }
-            else if (key == Windows.System.VirtualKey.GamepadRightTrigger)
-            { CycleViewEditTab(1); e.Handled = true; }
-            else if (key == Windows.System.VirtualKey.GamepadLeftShoulder)
-            { CycleEditCategory(-1); e.Handled = true; }
-            else if (key == Windows.System.VirtualKey.GamepadRightShoulder)
-            { CycleEditCategory(1); e.Handled = true; }
+            // Y / LB / RB / triggers are handled once in CoreWindow_KeyDown (avoid double-step).
         }
 
         async void ModePicker_Click(object sender, RoutedEventArgs e)
@@ -731,23 +819,56 @@ namespace MistMapper.GameBarWidget
             else
                 list.SelectedIndex = 0;
 
+            var accepted = false;
+            var picked = -1;
+            ContentDialog dialog = null;
+
+            void AcceptCurrent()
+            {
+                if (list.SelectedIndex < 0) return;
+                picked = list.SelectedIndex;
+                accepted = true;
+                dialog?.Hide();
+            }
+
+            // A / click on a row should select immediately (not require the Primary button).
             list.ItemClick += (s, args) =>
             {
                 list.SelectedItem = args.ClickedItem;
+                AcceptCurrent();
+            };
+            list.KeyDown += (s, e) =>
+            {
+                if (e.Key == Windows.System.VirtualKey.GamepadA
+                    || e.Key == Windows.System.VirtualKey.Enter
+                    || e.Key == Windows.System.VirtualKey.Space)
+                {
+                    AcceptCurrent();
+                    e.Handled = true;
+                }
             };
 
-            var dialog = new ContentDialog
+            dialog = new ContentDialog
             {
                 Title = title,
                 Content = list,
                 PrimaryButtonText = "Select",
                 CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Primary
+                // None so Gamepad A activates the focused list item, not the Primary button.
+                DefaultButton = ContentDialogButton.None
             };
 
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
-                return -1;
-            return list.SelectedIndex;
+            dialog.Opened += (s, e) =>
+            {
+                list.Focus(FocusState.Programmatic);
+                if (list.SelectedItem != null)
+                    list.ScrollIntoView(list.SelectedItem);
+            };
+
+            var result = await dialog.ShowAsync();
+            if (accepted) return picked;
+            if (result == ContentDialogResult.Primary) return list.SelectedIndex;
+            return -1;
         }
 
         static async Task<string> PromptTextAsync(string title, string header, string initial)
@@ -792,15 +913,19 @@ namespace MistMapper.GameBarWidget
                 {
                     Content = cat.Name,
                     Tag = cat.Name,
-                    Padding = new Thickness(12, 6, 12, 6),
-                    Margin = new Thickness(0, 0, 4, 0),
-                    FontSize = 12
+                    Style = (Style)Application.Current.Resources["PillButtonStyle"],
+                    Padding = new Thickness(16, 10, 16, 10),
+                    Margin = new Thickness(0, 0, 8, 0),
+                    FontSize = 13,
+                    MinWidth = 0
                 };
                 btn.Click += EditCategoryTab_Click;
                 SetTabActive(btn, cat.Name == _activeEditCategory);
                 EditCategoryTabs.Children.Add(btn);
             }
             RebuildEditCategoryContent();
+            // Layout must complete before we can scroll the active tab into view.
+            _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, BringActiveCategoryTabIntoView);
         }
 
         void EditCategoryTab_Click(object sender, RoutedEventArgs e)
@@ -813,6 +938,7 @@ namespace MistMapper.GameBarWidget
                     SetTabActive(b, (b.Tag as string) == _activeEditCategory);
             }
             RebuildEditCategoryContent();
+            BringActiveCategoryTabIntoView();
         }
 
         void RebuildEditCategoryContent()
@@ -853,19 +979,20 @@ namespace MistMapper.GameBarWidget
                     var btn = new Button
                     {
                         Tag = modeKey,
-                        Margin = new Thickness(0, 0, 0, 4),
+                        Style = (Style)Application.Current.Resources["PillButtonStyle"],
+                        Margin = new Thickness(0, 0, 0, 8),
                         HorizontalAlignment = HorizontalAlignment.Stretch,
                         HorizontalContentAlignment = HorizontalAlignment.Left,
-                        Padding = new Thickness(12, 8, 12, 8)
+                        Padding = new Thickness(16, 12, 16, 12)
                     };
                     var panel = new StackPanel();
                     panel.Children.Add(new TextBlock
                     {
                         Text = label,
-                        FontSize = 11,
+                        FontSize = 12,
                         Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"]
                     });
-                    panel.Children.Add(new TextBlock { Text = FormatModeLabel(current), FontSize = 14 });
+                    panel.Children.Add(new TextBlock { Text = FormatModeLabel(current), FontSize = 15 });
                     btn.Content = panel;
                     btn.Click += ModePicker_Click;
                     EditCategoryContent.Children.Add(btn);
@@ -898,7 +1025,9 @@ namespace MistMapper.GameBarWidget
                         SnapsTo = SliderSnapsTo.StepValues,
                         Value = _sensValues.ContainsKey(key) ? _sensValues[key] : 1.0,
                         Tag = key,
-                        Margin = new Thickness(0, 0, 0, 4)
+                        FontSize = 14,
+                        MinHeight = 48,
+                        Margin = new Thickness(0, 0, 0, 10)
                     };
                     slider.ValueChanged += (s, ev) =>
                     {
@@ -931,7 +1060,9 @@ namespace MistMapper.GameBarWidget
                         SnapsTo = SliderSnapsTo.StepValues,
                         Value = pct,
                         Tag = key,
-                        Margin = new Thickness(0, 0, 0, 4)
+                        FontSize = 14,
+                        MinHeight = 48,
+                        Margin = new Thickness(0, 0, 0, 10)
                     };
                     slider.ValueChanged += (s, ev) =>
                     {
@@ -993,10 +1124,10 @@ namespace MistMapper.GameBarWidget
             EditCategoryContent.Children.Add(new TextBlock
             {
                 Text = text,
-                FontSize = 11,
+                FontSize = 13,
                 FontWeight = Windows.UI.Text.FontWeights.SemiBold,
                 Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"],
-                Margin = new Thickness(0, 8, 0, 4)
+                Margin = new Thickness(0, 12, 0, 8)
             });
         }
 
@@ -1052,7 +1183,7 @@ namespace MistMapper.GameBarWidget
             {
                 Text = label,
                 VerticalAlignment = VerticalAlignment.Center,
-                FontSize = 13,
+                FontSize = 15,
                 Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseHighBrush"]
             };
             Grid.SetColumn(nameBlock, 0);
@@ -1062,33 +1193,37 @@ namespace MistMapper.GameBarWidget
             {
                 Text = mapped,
                 VerticalAlignment = VerticalAlignment.Center,
-                FontSize = 12,
+                FontSize = 14,
                 Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"],
                 HorizontalAlignment = HorizontalAlignment.Center
             };
             Grid.SetColumn(mappedBlock, 1);
             grid.Children.Add(mappedBlock);
 
-            var editBtn = new Button
+            var editHint = new TextBlock
             {
-                Content = "Edit \u203A",
-                Tag = inputId,
-                Padding = new Thickness(10, 4, 10, 4),
-                IsEnabled = !locked
+                Text = locked ? "Locked" : "Edit \u203A",
+                VerticalAlignment = VerticalAlignment.Center,
+                FontSize = 13,
+                Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"],
+                Margin = new Thickness(8, 0, 0, 0)
             };
-            editBtn.Click += EditCardButton_Click;
-            Grid.SetColumn(editBtn, 2);
-            grid.Children.Add(editBtn);
+            Grid.SetColumn(editHint, 2);
+            grid.Children.Add(editHint);
 
+            // Single button so Gamepad A activates Edit (nested buttons block that).
             var card = new Button
             {
                 Content = grid,
+                Tag = inputId,
+                Style = (Style)Application.Current.Resources["PillButtonStyle"],
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Padding = new Thickness(10, 8, 10, 8),
-                Margin = new Thickness(0, 0, 0, 4),
+                Padding = new Thickness(16, 14, 16, 14),
+                Margin = new Thickness(0, 0, 0, 8),
                 IsEnabled = !locked
             };
+            card.Click += EditCardButton_Click;
             EditCategoryContent.Children.Add(card);
         }
 
@@ -1244,8 +1379,9 @@ namespace MistMapper.GameBarWidget
 
         void StyleAsCurrentBinding(Button btn, bool isCurrent)
         {
-            if (isCurrent)
-                btn.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
+            btn.Style = isCurrent
+                ? (Style)Application.Current.Resources["PillAccentButtonStyle"]
+                : (Style)Application.Current.Resources["PillButtonStyle"];
         }
 
         void OpenRemapView(string inputId)
@@ -1287,8 +1423,8 @@ namespace MistMapper.GameBarWidget
         static void SetTabActive(Button btn, bool active)
         {
             btn.Style = active
-                ? (Style)Application.Current.Resources["AccentButtonStyle"]
-                : null;
+                ? (Style)Application.Current.Resources["PillAccentButtonStyle"]
+                : (Style)Application.Current.Resources["PillButtonStyle"];
         }
 
         void BuildRemapGrid()
@@ -1332,9 +1468,10 @@ namespace MistMapper.GameBarWidget
                     {
                         Content = id,
                         Tag = "xbox:" + id,
-                        Padding = new Thickness(14, 8, 14, 8),
-                        Margin = new Thickness(0, 0, 4, 4),
-                        MinWidth = 60
+                        Padding = new Thickness(16, 12, 16, 12),
+                        Margin = new Thickness(0, 0, 8, 8),
+                        MinWidth = 64,
+                        FontSize = 14
                     };
                     StyleAsCurrentBinding(btn, IsCurrentXboxBinding(id));
                     btn.Click += RemapGridButton_Click;
@@ -1367,9 +1504,10 @@ namespace MistMapper.GameBarWidget
                     {
                         Content = label,
                         Tag = "key:" + vk,
-                        Padding = new Thickness(4, 6, 4, 6),
-                        Margin = new Thickness(0, 0, 2, 0),
-                        MinWidth = 28 * width,
+                        Padding = new Thickness(8, 10, 8, 10),
+                        Margin = new Thickness(0, 0, 4, 4),
+                        MinWidth = 36 * width,
+                        FontSize = 13,
                         HorizontalContentAlignment = HorizontalAlignment.Center
                     };
                     StyleAsCurrentBinding(btn, IsCurrentKeyBinding(vk));
@@ -1385,8 +1523,9 @@ namespace MistMapper.GameBarWidget
             var toggle = new ToggleButton
             {
                 Content = label,
-                Padding = new Thickness(12, 6, 12, 6),
-                Margin = new Thickness(0, 0, 4, 0)
+                Padding = new Thickness(16, 10, 16, 10),
+                Margin = new Thickness(0, 0, 8, 0),
+                FontSize = 14
             };
             toggle.IsChecked = (_stickyMods & flag) != 0;
             toggle.Checked += (s, _) =>
@@ -1413,9 +1552,10 @@ namespace MistMapper.GameBarWidget
                 {
                     Content = output.Replace("ScrollUp", "Scroll Up").Replace("ScrollDown", "Scroll Down"),
                     Tag = "mouse:" + output,
-                    Padding = new Thickness(14, 8, 14, 8),
-                    Margin = new Thickness(0, 0, 4, 4),
-                    MinWidth = 80
+                    Padding = new Thickness(16, 12, 16, 12),
+                    Margin = new Thickness(0, 0, 8, 8),
+                    MinWidth = 88,
+                    FontSize = 14
                 };
                 StyleAsCurrentBinding(btn, IsCurrentMouseBinding(output));
                 btn.Click += RemapGridButton_Click;
@@ -1655,6 +1795,25 @@ namespace MistMapper.GameBarWidget
             DepBanner.Visibility = Visibility.Collapsed;
         }
 
+        async Task LoadGameIconAsync()
+        {
+            try
+            {
+                var file = await ApplicationData.Current.LocalFolder.GetFileAsync("current-game-icon.png");
+                using (var stream = await file.OpenReadAsync())
+                {
+                    var bmp = new BitmapImage();
+                    await bmp.SetSourceAsync(stream);
+                    GameIconImage.Source = bmp;
+                }
+            }
+            catch
+            {
+                GameIconBorder.Visibility = Visibility.Collapsed;
+                GameIconImage.Source = null;
+            }
+        }
+
         void Bind(JsonObject state, bool force)
         {
             _suppress = true;
@@ -1666,6 +1825,9 @@ namespace MistMapper.GameBarWidget
                 _activeProfileId = state.GetNamedString("activeProfileId", "");
                 var activeName = state.GetNamedString("activeProfileName", "");
                 var game = state.GetNamedString("currentGameExe", "");
+                var gameName = state.GetNamedString("currentGameName", "");
+                if (string.IsNullOrWhiteSpace(gameName))
+                    gameName = game;
                 var source = state.GetNamedString("activeProfileSource", "");
                 var depError = state.GetNamedBoolean("dependencyError", false);
                 var viiperOk = state.GetNamedBoolean("viiperOk", false);
@@ -1686,9 +1848,35 @@ namespace MistMapper.GameBarWidget
                 BridgeToggle.IsOn = bridgeOn;
                 PauseSteamToggle.IsOn = pauseSteam;
                 StatusText.Text = status;
-                GameText.Text = string.IsNullOrEmpty(game)
-                    ? "No foreground game \u00b7 profile source: " + source
-                    : "Game: " + game + " \u00b7 " + activeName + " (" + source + ")";
+                if (string.IsNullOrEmpty(game))
+                {
+                    GameText.Text = "No game \u00b7 " + activeName;
+                }
+                else
+                {
+                    var forGame = source.Equals("GameRule", StringComparison.OrdinalIgnoreCase);
+                    GameText.Text = forGame
+                        ? "Playing " + gameName + " \u00b7 layout " + activeName
+                        : "Playing " + gameName + " \u00b7 " + activeName + " (not bound yet \u2014 edit to create)";
+                }
+
+                var hasIcon = state.GetNamedBoolean("hasGameIcon", false);
+                var iconToken = state.GetNamedString("gameIconToken", "");
+                if (hasIcon && !string.IsNullOrEmpty(iconToken))
+                {
+                    GameIconBorder.Visibility = Visibility.Visible;
+                    if (!string.Equals(iconToken, _lastGameIconToken, StringComparison.Ordinal))
+                    {
+                        _lastGameIconToken = iconToken;
+                        _ = LoadGameIconAsync();
+                    }
+                }
+                else
+                {
+                    GameIconBorder.Visibility = Visibility.Collapsed;
+                    GameIconImage.Source = null;
+                    _lastGameIconToken = "";
+                }
 
                 if (depError || !viiperOk)
                 {

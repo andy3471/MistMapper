@@ -16,6 +16,7 @@ public interface IForegroundState : IDisposable
 {
     string ExeName { get; }
     string Path { get; }
+    string DisplayName { get; }
     event Action? Changed;
 }
 

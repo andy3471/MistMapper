@@ -164,10 +164,53 @@ public sealed class BridgeService : IDisposable
         if (string.IsNullOrWhiteSpace(exe))
             throw new InvalidOperationException("No foreground game detected yet.");
         var profile = _resolvedProfile ?? _profiles.ActiveProfile;
-        _profiles.BindToGame(profile.Id, exe, null, Path.GetFileNameWithoutExtension(exe));
+        _profiles.BindToGame(profile.Id, exe, null, FriendlyGameName());
         _manualProfileLock = false;
         ResolveProfile();
         PublishStatus();
+    }
+
+    /// <summary>
+    /// Steam-style: while a game is focused, layout edits target that game's layout.
+    /// First edit clones the source layout, binds it, and returns the new profile id.
+    /// </summary>
+    /// <returns>Profile id that should receive the pending mutation; may differ from <paramref name="sourceProfileId"/>.</returns>
+    public string EnsureLayoutForCurrentGame(string sourceProfileId)
+    {
+        var exe = _foreground.ExeName;
+        if (string.IsNullOrWhiteSpace(exe))
+            return sourceProfileId;
+
+        var existing = _profiles.FindBindingForGame(exe, _foreground.Path);
+        if (existing is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(_foreground.DisplayName)
+                && !string.Equals(existing.DisplayName, _foreground.DisplayName, StringComparison.Ordinal))
+            {
+                _profiles.BindToGame(existing.ProfileId, exe, existing.MatchPathContains, FriendlyGameName());
+            }
+
+            _manualProfileLock = false;
+            ResolveProfile();
+            var bound = _resolvedProfile ?? _profiles.ActiveProfile;
+            return bound.Id;
+        }
+
+        var name = FriendlyGameName();
+        var created = _profiles.SaveAsProfile(sourceProfileId, name);
+        _profiles.BindToGame(created.Id, exe, null, name);
+        _manualProfileLock = false;
+        ResolveProfile();
+        PublishStatus(message: "Created layout for " + name);
+        return created.Id;
+    }
+
+    string FriendlyGameName()
+    {
+        var name = _foreground.DisplayName;
+        if (string.IsNullOrWhiteSpace(name))
+            name = GameDisplayName.Resolve(_foreground.Path, _foreground.ExeName);
+        return name;
     }
 
     void ResolveProfile()
@@ -431,6 +474,9 @@ public sealed class BridgeService : IDisposable
             _status.ActiveDriverName = _activeDriver?.DisplayName ?? _drivers.Primary.DisplayName;
             _status.CurrentGameExe = _foreground.ExeName;
             _status.CurrentGamePath = _foreground.Path;
+            _status.CurrentGameName = string.IsNullOrWhiteSpace(_foreground.DisplayName)
+                ? GameDisplayName.Resolve(_foreground.Path, _foreground.ExeName)
+                : _foreground.DisplayName;
             _status.PressedInputs = _pressed.ToList();
             _status.Dependencies =
             [
@@ -468,6 +514,7 @@ public sealed class BridgeService : IDisposable
         ActiveDriverName = s.ActiveDriverName,
         CurrentGameExe = s.CurrentGameExe,
         CurrentGamePath = s.CurrentGamePath,
+        CurrentGameName = s.CurrentGameName,
         PressedInputs = s.PressedInputs.ToList(),
         Dependencies = s.Dependencies.Select(d => new DependencyStatus
         {

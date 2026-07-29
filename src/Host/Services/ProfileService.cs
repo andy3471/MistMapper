@@ -111,6 +111,33 @@ public sealed class ProfileService
         lock (_lock) return _doc.ProfileBindings.Select(CloneBinding).ToList();
     }
 
+    /// <summary>Returns the binding that would win for this foreground process, if any.</summary>
+    public ProfileBinding? FindBindingForGame(string exe, string path)
+    {
+        lock (_lock)
+        {
+            ProfileBinding? bestPath = null;
+            ProfileBinding? bestExe = null;
+            foreach (var b in _doc.ProfileBindings)
+            {
+                if (!string.IsNullOrEmpty(b.MatchPathContains) &&
+                    !string.IsNullOrEmpty(path) &&
+                    path.Contains(b.MatchPathContains, StringComparison.OrdinalIgnoreCase) &&
+                    (string.IsNullOrEmpty(b.MatchExe) || b.MatchExe.Equals(exe, StringComparison.OrdinalIgnoreCase) ||
+                     Path.GetFileName(path).Equals(b.MatchExe, StringComparison.OrdinalIgnoreCase)))
+                {
+                    bestPath = b;
+                    break;
+                }
+                if (b.MatchExe.Equals(exe, StringComparison.OrdinalIgnoreCase))
+                    bestExe ??= b;
+            }
+
+            var hit = bestPath ?? bestExe;
+            return hit is null ? null : CloneBinding(hit);
+        }
+    }
+
     public void SetActiveProfile(string id)
     {
         lock (_lock)
