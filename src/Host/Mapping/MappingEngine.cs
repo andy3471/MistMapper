@@ -28,6 +28,8 @@ public sealed class MappingEngine
     readonly Dictionary<string, (float X, float Y)> _padMouseLast = new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string, (float Vx, float Vy)> _padTrackballVel = new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string, (float X, float Y)> _padSmooth = new(StringComparer.OrdinalIgnoreCase);
+    readonly Dictionary<string, float> _mouseHapticAccum = new(StringComparer.OrdinalIgnoreCase);
+    readonly Queue<(bool RightPad, byte Intensity)> _mouseHapticTicks = new();
     readonly HashSet<string> _heldKeys = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> _heldMouse = new(StringComparer.OrdinalIgnoreCase);
     bool _gyroToggleOn;
@@ -286,6 +288,7 @@ public sealed class MappingEngine
         {
             _padMouseLast.Remove(id);
             _padSmooth.Remove(id);
+            ClearMouseHapticState(id);
             // Trackball impulse coast is OS-mouse only.
             if (!surface.TrackballMode || mode != TrackpadMode.AsMouse)
                 _padTrackballVel.Remove(id);
@@ -372,6 +375,9 @@ public sealed class MappingEngine
         float dx = nx - last.X;
         float dy = ny - last.Y;
         (dx, dy) = Rotate2D(dx, dy, surface.RotationDegrees);
+        // Haptics track raw finger travel so swipe speed maps to tick density.
+        float hapticDx = dx;
+        float hapticDy = dy;
         dx = SmoothAxis(id, "x", dx, surface.Smoothing);
         dy = SmoothAxis(id, "y", dy, surface.Smoothing);
 
@@ -390,6 +396,78 @@ public sealed class MappingEngine
             _mouseAccumX += outX;
             _mouseAccumY += -outY;
         }
+
+        ConsiderMouseHaptic(id, hapticDx, hapticDy, surface.MouseHaptics);
+    }
+
+    void ClearMouseHapticState(string padId)
+    {
+        _mouseHapticAccum.Remove(padId);
+        if (_mouseHapticTicks.Count == 0) return;
+
+        bool right = padId.Contains("Right", StringComparison.OrdinalIgnoreCase);
+        var kept = new Queue<(bool RightPad, byte Intensity)>();
+        while (_mouseHapticTicks.Count > 0)
+        {
+            var tick = _mouseHapticTicks.Dequeue();
+            if (tick.RightPad != right)
+                kept.Enqueue(tick);
+        }
+        while (kept.Count > 0)
+            _mouseHapticTicks.Enqueue(kept.Dequeue());
+    }
+
+    void ConsiderMouseHaptic(string padId, float dx, float dy, MouseHapticsIntensity intensity)
+    {
+        if (intensity == MouseHapticsIntensity.Off) return;
+
+        float dist = MathF.Sqrt(dx * dx + dy * dy);
+        if (dist < 0.00002f) return;
+
+        // Distance-per-tick: faster swipes cross spacing more often → denser clicks.
+        float spacing = intensity switch
+        {
+            MouseHapticsIntensity.Low => 0.055f,
+            MouseHapticsIntensity.High => 0.014f,
+            _ => 0.028f
+        };
+
+        _mouseHapticAccum.TryGetValue(padId, out float accum);
+        accum += dist;
+
+        byte level = intensity switch
+        {
+            MouseHapticsIntensity.Low => 80,
+            MouseHapticsIntensity.High => 200,
+            _ => 140
+        };
+        bool right = padId.Contains("Right", StringComparison.OrdinalIgnoreCase);
+
+        // Cap per frame so one HID burst doesn't become a buzz train; leftover
+        // distance carries to the next report so continuous motion stays dense.
+        int ticks = 0;
+        while (accum >= spacing && ticks < 3)
+        {
+            accum -= spacing;
+            _mouseHapticTicks.Enqueue((right, level));
+            ticks++;
+        }
+
+        _mouseHapticAccum[padId] = accum;
+    }
+
+    /// <summary>Drain one pending Steam-style mouse haptic tick (if any).</summary>
+    public bool TryConsumeMouseHaptic(out bool rightPad, out byte intensity)
+    {
+        if (_mouseHapticTicks.Count == 0)
+        {
+            rightPad = false;
+            intensity = 0;
+            return false;
+        }
+
+        (rightPad, intensity) = _mouseHapticTicks.Dequeue();
+        return true;
     }
 
     /// <summary>
@@ -606,6 +684,8 @@ public sealed class MappingEngine
         _padMouseLast.Clear();
         _padTrackballVel.Clear();
         _padSmooth.Clear();
+        _mouseHapticAccum.Clear();
+        _mouseHapticTicks.Clear();
         _gyroToggleOn = false;
         _gyroTogglePrevPressed = false;
         foreach (var token in _heldKeys.ToList())

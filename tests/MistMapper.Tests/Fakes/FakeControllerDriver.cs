@@ -38,6 +38,11 @@ public sealed class FakeControllerDriver : IControllerDriver
     public void SetRumble(byte leftMotor, byte rightMotor) =>
         RumbleHistory.Add((leftMotor, rightMotor));
 
+    public List<(bool RightPad, byte Intensity)> MouseHapticHistory { get; } = [];
+
+    public void PulseMouseHaptic(bool rightPad, byte intensity) =>
+        MouseHapticHistory.Add((rightPad, intensity));
+
     public bool TryRead(out InputFrame frame)
     {
         if (_frames.Count > 0)

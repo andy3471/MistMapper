@@ -581,6 +581,7 @@ public sealed class GameBarFileIpcService : IDisposable
             writer.WriteNumber("verticalFrictionScale", s.VerticalFrictionScale);
             writer.WriteNumber("smoothing", s.Smoothing);
             writer.WriteNumber("rotationDegrees", s.RotationDegrees);
+            writer.WriteString("mouseHaptics", s.MouseHaptics.ToString());
             writer.WriteEndObject();
         }
 

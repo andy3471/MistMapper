@@ -40,4 +40,10 @@ public interface IControllerDriver : IDisposable
     /// No-op on drivers that cannot rumble.
     /// </summary>
     void SetRumble(byte leftMotor, byte rightMotor) { }
+
+    /// <summary>
+    /// Short Steam-style mouse haptic tick on the left or right trackpad (or soft motor stand-in).
+    /// <paramref name="intensity"/> is 1–255; 0 is a no-op.
+    /// </summary>
+    void PulseMouseHaptic(bool rightPad, byte intensity) { }
 }

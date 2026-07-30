@@ -86,6 +86,9 @@ public sealed class SteamControllerDriver : IControllerDriver
     public void SetRumble(byte leftMotor, byte rightMotor) =>
         _device?.SetRumble(leftMotor, rightMotor);
 
+    public void PulseMouseHaptic(bool rightPad, byte intensity) =>
+        _device?.PulseMouseHaptic(rightPad, intensity);
+
     public bool TryRead(out InputFrame frame)
     {
         frame = new InputFrame();

@@ -22,6 +22,9 @@ public sealed class DualSenseDevice : IDisposable
     readonly byte[] _readBuffer = new byte[128];
     bool _bluetooth;
     bool _enhanced;
+    byte _rumbleLeft;
+    byte _rumbleRight;
+    int _mouseHapticEpoch;
     readonly NativeGamepadHider _nativeHider = new();
 
     public bool IsOpen => _stream is not null;
@@ -244,7 +247,39 @@ public sealed class DualSenseDevice : IDisposable
         }
     }
 
-    public void SetRumble(byte leftMotor, byte rightMotor) => WriteRumble(leftMotor, rightMotor);
+    public void SetRumble(byte leftMotor, byte rightMotor)
+    {
+        _rumbleLeft = leftMotor;
+        _rumbleRight = rightMotor;
+        WriteRumble(leftMotor, rightMotor);
+    }
+
+    /// <summary>Soft motor blip — DualSense has no trackpad actuator.</summary>
+    public void PulseMouseHaptic(bool rightPad, byte intensity)
+    {
+        if (intensity == 0 || _stream is null) return;
+        // Soft / mid / firm motor blips for Low / Medium / High.
+        byte level = intensity switch
+        {
+            < 110 => 28,
+            < 170 => 52,
+            _ => 80
+        };
+        byte left = rightPad ? (byte)0 : level;
+        byte right = rightPad ? level : (byte)0;
+        int epoch = Interlocked.Increment(ref _mouseHapticEpoch);
+        WriteRumble(left, right);
+        var restoreL = _rumbleLeft;
+        var restoreR = _rumbleRight;
+        _ = Task.Run(async () =>
+        {
+            try { await Task.Delay(28); }
+            catch { /* ignore */ }
+            // Ignore stale restores so overlapping ticks don't leave motors stuck.
+            if (Volatile.Read(ref _mouseHapticEpoch) != epoch) return;
+            WriteRumble(restoreL, restoreR);
+        });
+    }
 
     public async Task<bool> IdentifyAsync(CancellationToken ct = default)
     {

@@ -33,6 +33,7 @@ namespace MistMapper.GameBarWidget
         static readonly string[] GyroButtonModes = { "HoldToEnable", "HoldToSuppress", "Toggle" };
         static readonly string[] GyroCombineModes = { "Any", "All" };
         static readonly string[] TrackballFrictions = { "Off", "Low", "Medium", "High", "ExtraHigh" };
+        static readonly string[] MouseHapticsIntensities = { "Off", "Low", "Medium", "High" };
         static readonly (string Id, string Label)[] GyroActivationChoices =
         {
             ("RightTrackpad", "Right Trackpad Touch"),
@@ -249,6 +250,10 @@ namespace MistMapper.GameBarWidget
         readonly Dictionary<string, double> _padRotation = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
         {
             ["left"] = 0, ["right"] = 0
+        };
+        readonly Dictionary<string, string> _mouseHaptics = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["left"] = "Medium", ["right"] = "Medium"
         };
 
         public WidgetPage()
@@ -1482,7 +1487,8 @@ namespace MistMapper.GameBarWidget
             + "\"trackballFriction\":\"" + _trackballFriction[side] + "\","
             + "\"verticalFrictionScale\":" + _padVertFriction[side].ToString(CultureInfo.InvariantCulture) + ","
             + "\"smoothing\":" + _padSmoothing[side].ToString(CultureInfo.InvariantCulture) + ","
-            + "\"rotationDegrees\":" + _padRotation[side].ToString(CultureInfo.InvariantCulture)
+            + "\"rotationDegrees\":" + _padRotation[side].ToString(CultureInfo.InvariantCulture) + ","
+            + "\"mouseHaptics\":\"" + _mouseHaptics[side] + "\""
             + "}";
 
         async void AdvancedSettingsCog_Click(object sender, RoutedEventArgs e)
@@ -1641,6 +1647,7 @@ namespace MistMapper.GameBarWidget
             var draftVert = _padVertFriction[side];
             var draftSmooth = _padSmoothing[side];
             var draftRot = _padRotation[side];
+            var draftHaptics = _mouseHaptics[side];
 
             AdvancedSettingsContent.Children.Clear();
             AdvancedSettingsTitle.Text = ModeSurfaceLabel(side);
@@ -1657,6 +1664,13 @@ namespace MistMapper.GameBarWidget
                 "Trackball Friction",
                 TrackballFrictions, TrackballFrictions.Select(FormatModeLabel).ToArray(),
                 draftFriction, v => draftFriction = v));
+
+            AdvancedSettingsContent.Children.Add(SectionLabel("Mouse haptics"));
+            AdvancedSettingsContent.Children.Add(BuildChoicePillRow(
+                "Intensity",
+                MouseHapticsIntensities, MouseHapticsIntensities.Select(FormatModeLabel).ToArray(),
+                draftHaptics, v => draftHaptics = v));
+            AdvancedSettingsContent.Children.Add(Hint("Steam-style ticks while sliding as mouse / mouse joystick."));
 
             AdvancedSettingsContent.Children.Add(SectionLabel("Feel"));
             var vFric = MakeStyledSlider("Vertical Friction Scale %", 10, 300, 5, draftVert * 100);
@@ -1682,6 +1696,7 @@ namespace MistMapper.GameBarWidget
             _padVertFriction[side] = draftVert;
             _padSmoothing[side] = draftSmooth;
             _padRotation[side] = draftRot;
+            _mouseHaptics[side] = draftHaptics;
             await SendSensitivityAsync();
         }
 
@@ -1824,6 +1839,7 @@ namespace MistMapper.GameBarWidget
             _padVertFriction[side] = obj.GetNamedNumber("verticalFrictionScale", 1);
             _padSmoothing[side] = obj.GetNamedNumber("smoothing", 20);
             _padRotation[side] = obj.GetNamedNumber("rotationDegrees", 0);
+            _mouseHaptics[side] = obj.GetNamedString("mouseHaptics", "Medium");
         }
 
         // ═══════════════ Edit panel: category tabs + content ═══════════════

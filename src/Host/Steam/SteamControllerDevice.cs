@@ -28,9 +28,15 @@ public sealed class SteamControllerDevice : IDisposable
     const byte CmdLoadDefaultSettings = 0x8E;
     const byte CmdTriggerHapticPulse = 0x8F; // SC1 trackpad haptics (emulates rumble)
     const byte OutReportHapticRumble = 0x80; // SC2 Triton output report
+    const byte OutReportHapticPulse = 0x81;
+    const byte OutReportHapticCommand = 0x82;
     const byte HapticPadLeft = 0;
     const byte HapticPadRight = 1;
     const byte HapticPadBoth = 2;
+    const byte TritonSideLeft = 0x01;
+    const byte TritonSideRight = 0x02;
+    const byte TritonHapticTick = 1;
+    const byte TritonHapticClick = 2;
     // Valve settings IDs (see linux hid-steam.c)
     const byte SettingLeftTrackpadMode = 0x07;
     const byte SettingRightTrackpadMode = 0x08;
@@ -520,6 +526,113 @@ public sealed class SteamControllerDevice : IDisposable
         ushort count = (ushort)Math.Clamp(6 + motor / 12, 6, 24);
         byte gain = 0; // 0 dB — positive gain is piercingly loud on SC1
 
+        return SendHapticPulseRaw(wirePad, duration, interval, count, gain);
+    }
+
+    /// <summary>Steam-style mouse tick on one trackpad (SC1/SC2 pad click, not motor buzz).</summary>
+    public void PulseMouseHaptic(bool rightPad, byte intensity)
+    {
+        if (intensity == 0) return;
+
+        if (IsSc2)
+        {
+            // SC2 needs Triton output reports — classic 0x8F is barely felt / ignored.
+            // Ascending strength: Low < Medium < High (tick gain, then pulse on High only).
+            byte side = rightPad ? TritonSideRight : TritonSideLeft;
+            if (intensity < 110)
+            {
+                WriteTritonHapticCommand(side, TritonHapticTick, gainDb: -4);
+            }
+            else if (intensity < 170)
+            {
+                WriteTritonHapticCommand(side, TritonHapticTick, gainDb: 0);
+            }
+            else
+            {
+                WriteTritonHapticCommand(side, TritonHapticTick, gainDb: 2);
+                WriteTritonHapticPulse(side, onUs: 2400, offUs: 400, repeat: 1);
+            }
+            return;
+        }
+
+        byte pad = rightPad ? HapticPadRight : HapticPadLeft;
+        byte wirePad = (byte)(pad ^ 1);
+
+        // Ascending: Low < Medium < High.
+        ushort duration;
+        sbyte gainDbSc1;
+        if (intensity < 110)
+        {
+            duration = 1200;
+            gainDbSc1 = -4;
+        }
+        else if (intensity < 170)
+        {
+            duration = 1800;
+            gainDbSc1 = 0;
+        }
+        else
+        {
+            duration = 2400;
+            gainDbSc1 = 2;
+        }
+
+        ushort interval = (ushort)(duration + 300);
+        SendHapticPulseRaw(wirePad, duration, interval, count: 1, (byte)gainDbSc1);
+    }
+
+    bool WriteTritonHapticCommand(byte side, byte command, sbyte gainDb)
+    {
+        if (_stream is null) return false;
+        var buffer = new byte[64];
+        buffer[0] = OutReportHapticCommand;
+        buffer[1] = side;
+        buffer[2] = command;
+        buffer[3] = (byte)gainDb;
+        return WriteOutputReport(buffer);
+    }
+
+    bool WriteTritonHapticPulse(byte side, ushort onUs, ushort offUs, ushort repeat)
+    {
+        if (_stream is null) return false;
+        var buffer = new byte[64];
+        buffer[0] = OutReportHapticPulse;
+        buffer[1] = side;
+        buffer[2] = (byte)(onUs & 0xFF);
+        buffer[3] = (byte)(onUs >> 8);
+        buffer[4] = (byte)(offUs & 0xFF);
+        buffer[5] = (byte)(offUs >> 8);
+        buffer[6] = (byte)(repeat & 0xFF);
+        buffer[7] = (byte)(repeat >> 8);
+        return WriteOutputReport(buffer);
+    }
+
+    bool WriteOutputReport(byte[] buffer)
+    {
+        lock (_writeLock)
+        {
+            try
+            {
+                _stream!.Write(buffer, 0, buffer.Length);
+                return true;
+            }
+            catch
+            {
+                try
+                {
+                    _stream!.Write(buffer, 0, 10);
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+        }
+    }
+
+    bool SendHapticPulseRaw(byte wirePad, ushort duration, ushort interval, ushort count, byte gain)
+    {
         Span<byte> payload = stackalloc byte[8];
         payload[0] = wirePad;
         payload[1] = (byte)(duration & 0xFF);
@@ -550,26 +663,7 @@ public sealed class SteamControllerDevice : IDisposable
         buffer[8] = (byte)(rightSpeed >> 8);
         buffer[9] = 0; // right gain
 
-        lock (_writeLock)
-        {
-            try
-            {
-                _stream.Write(buffer, 0, buffer.Length);
-                return true;
-            }
-            catch
-            {
-                try
-                {
-                    _stream.Write(buffer, 0, 10);
-                    return true;
-                }
-                catch
-                {
-                    return false;
-                }
-            }
-        }
+        return WriteOutputReport(buffer);
     }
 
     public bool TryReadState(out MistMapper.Shared.SteamControllerState state, int timeoutMs = 50)

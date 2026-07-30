@@ -17,12 +17,16 @@ public sealed class TrackpadSurfaceSettings
     /// <summary>Rotate pad axes in degrees (thumb cant).</summary>
     public float RotationDegrees { get; set; }
 
+    /// <summary>Haptic ticks while sliding in As Mouse / As Mouse Joystick.</summary>
+    public MouseHapticsIntensity MouseHaptics { get; set; } = MouseHapticsIntensity.Medium;
+
     public static TrackpadSurfaceSettings Clone(TrackpadSurfaceSettings? s) => new()
     {
         TrackballMode = s?.TrackballMode ?? true,
         TrackballFriction = s?.TrackballFriction ?? TrackballFriction.Medium,
         VerticalFrictionScale = s?.VerticalFrictionScale ?? 1f,
         Smoothing = s?.Smoothing ?? 20f,
-        RotationDegrees = s?.RotationDegrees ?? 0f
+        RotationDegrees = s?.RotationDegrees ?? 0f,
+        MouseHaptics = s?.MouseHaptics ?? MouseHapticsIntensity.Medium
     };
 }

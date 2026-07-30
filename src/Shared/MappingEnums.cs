@@ -111,3 +111,12 @@ public enum TrackballFriction
     High,
     ExtraHigh
 }
+
+/// <summary>Steam-style haptic ticks while a trackpad is used as mouse / mouse-joystick.</summary>
+public enum MouseHapticsIntensity
+{
+    Off,
+    Low,
+    Medium,
+    High
+}
