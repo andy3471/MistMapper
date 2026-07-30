@@ -30,13 +30,14 @@ public sealed class SteamControllerDevice : IDisposable
     const byte OutReportHapticRumble = 0x80; // SC2 Triton output report
     const byte OutReportHapticPulse = 0x81;
     const byte OutReportHapticCommand = 0x82;
+    const byte OutReportHapticLfoTone = 0x83;
     const byte HapticPadLeft = 0;
     const byte HapticPadRight = 1;
     const byte HapticPadBoth = 2;
-    const byte TritonSideLeft = 0x01;
-    const byte TritonSideRight = 0x02;
-    const byte TritonHapticTick = 1;
-    const byte TritonHapticClick = 2;
+    // Triton haptic "side" is an actuator index (SteamHapticsSinger / sc2-research):
+    // 0/1 = grips, 3/4 = left/right front trackpads. Not SDL's 0x01/0x02/0x03 bitmask.
+    const byte TritonActuatorLeftPad = 3;
+    const byte TritonActuatorRightPad = 4;
     // Valve settings IDs (see linux hid-steam.c)
     const byte SettingLeftTrackpadMode = 0x07;
     const byte SettingRightTrackpadMode = 0x08;
@@ -536,22 +537,16 @@ public sealed class SteamControllerDevice : IDisposable
 
         if (IsSc2)
         {
-            // SC2 needs Triton output reports — classic 0x8F is barely felt / ignored.
-            // Ascending strength: Low < Medium < High (tick gain, then pulse on High only).
-            byte side = rightPad ? TritonSideRight : TritonSideLeft;
-            if (intensity < 110)
+            // Use LFO tone (0x83) on pad actuators 3/4 — same path SteamHapticsSinger uses
+            // for trackpad-localized notes. HapticPulse (0x81) can feel like whole-body buzz.
+            byte actuator = rightPad ? TritonActuatorRightPad : TritonActuatorLeftPad;
+            sbyte gainDb = intensity switch
             {
-                WriteTritonHapticCommand(side, TritonHapticTick, gainDb: -4);
-            }
-            else if (intensity < 170)
-            {
-                WriteTritonHapticCommand(side, TritonHapticTick, gainDb: 0);
-            }
-            else
-            {
-                WriteTritonHapticCommand(side, TritonHapticTick, gainDb: 2);
-                WriteTritonHapticPulse(side, onUs: 2400, offUs: 400, repeat: 1);
-            }
+                < 110 => (sbyte)-18, // Low
+                < 170 => (sbyte)-12, // Medium
+                _ => (sbyte)-6       // High
+            };
+            WriteTritonHapticLfoTone(actuator, gainDb, frequencyHz: 280, durationMs: 2);
             return;
         }
 
@@ -563,22 +558,40 @@ public sealed class SteamControllerDevice : IDisposable
         sbyte gainDbSc1;
         if (intensity < 110)
         {
-            duration = 1200;
-            gainDbSc1 = -4;
+            duration = 400;
+            gainDbSc1 = -10;
         }
         else if (intensity < 170)
         {
-            duration = 1800;
-            gainDbSc1 = 0;
+            duration = 600;
+            gainDbSc1 = -6;
         }
         else
         {
-            duration = 2400;
-            gainDbSc1 = 2;
+            duration = 850;
+            gainDbSc1 = -3;
         }
 
         ushort interval = (ushort)(duration + 300);
         SendHapticPulseRaw(wirePad, duration, interval, count: 1, (byte)gainDbSc1);
+    }
+
+    bool WriteTritonHapticLfoTone(byte actuator, sbyte gainDb, ushort frequencyHz, ushort durationMs)
+    {
+        if (_stream is null) return false;
+        // MsgHapticLfoTone — HID_HAPTIC_LFO_TONE_REPORT_BYTES = 10 (incl. report id).
+        var buffer = new byte[64];
+        buffer[0] = OutReportHapticLfoTone;
+        buffer[1] = actuator;
+        buffer[2] = (byte)gainDb;
+        buffer[3] = (byte)(frequencyHz & 0xFF);
+        buffer[4] = (byte)(frequencyHz >> 8);
+        buffer[5] = (byte)(durationMs & 0xFF);
+        buffer[6] = (byte)(durationMs >> 8);
+        buffer[7] = 0; // lfo_freq lo
+        buffer[8] = 0; // lfo_freq hi
+        buffer[9] = 0; // lfo_depth
+        return WriteOutputReport(buffer);
     }
 
     bool WriteTritonHapticCommand(byte side, byte command, sbyte gainDb)

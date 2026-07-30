@@ -261,9 +261,9 @@ public sealed class DualSenseDevice : IDisposable
         // Soft / mid / firm motor blips for Low / Medium / High.
         byte level = intensity switch
         {
-            < 110 => 28,
-            < 170 => 52,
-            _ => 80
+            < 110 => 12,
+            < 170 => 20,
+            _ => 32
         };
         byte left = rightPad ? (byte)0 : level;
         byte right = rightPad ? level : (byte)0;
