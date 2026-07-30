@@ -86,4 +86,23 @@ public sealed class MouseHapticsTests
         _engine.Map(PadFrame(0.2f, 0f, touch: false), profile);
         _engine.TryConsumeMouseHaptic(out _, out _).Should().BeFalse();
     }
+
+    [Fact]
+    public void AsMouse_stationary_jitter_does_not_keep_ticking()
+    {
+        var profile = MousePadProfile(MouseHapticsIntensity.High);
+        _engine.Map(PadFrame(0f, 0f), profile);
+        // Seed some travel so accum isn't empty, then hold with pad noise.
+        _engine.Map(PadFrame(0.05f, 0f), profile);
+        while (_engine.TryConsumeMouseHaptic(out _, out _)) { }
+
+        // Sub-idle jitter for many frames must not drip into new ticks.
+        for (int i = 0; i < 200; i++)
+        {
+            float n = (i % 2 == 0) ? 0.001f : -0.001f;
+            _engine.Map(PadFrame(0.05f + n, 0f), profile);
+        }
+
+        _engine.TryConsumeMouseHaptic(out _, out _).Should().BeFalse();
+    }
 }

@@ -422,7 +422,13 @@ public sealed class MappingEngine
         if (intensity == MouseHapticsIntensity.Off) return;
 
         float dist = MathF.Sqrt(dx * dx + dy * dy);
-        if (dist < 0.00002f) return;
+        // Pad noise while holding still will otherwise drip into spacing and keep ticking.
+        const float idleEpsilon = 0.0025f;
+        if (dist < idleEpsilon)
+        {
+            _mouseHapticAccum.Remove(padId);
+            return;
+        }
 
         // Distance-per-tick: faster swipes cross spacing more often → denser clicks.
         float spacing = intensity switch
