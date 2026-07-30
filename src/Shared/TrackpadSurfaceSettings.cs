@@ -20,6 +20,9 @@ public sealed class TrackpadSurfaceSettings
     /// <summary>Haptic ticks while sliding in As Mouse / As Mouse Joystick.</summary>
     public MouseHapticsIntensity MouseHaptics { get; set; } = MouseHapticsIntensity.Medium;
 
+    /// <summary>1.0 = mild turn; higher = more yaw pixels per radian of flick.</summary>
+    public float FlickSensitivity { get; set; } = 1.0f;
+
     public static TrackpadSurfaceSettings Clone(TrackpadSurfaceSettings? s) => new()
     {
         TrackballMode = s?.TrackballMode ?? true,
@@ -27,6 +30,7 @@ public sealed class TrackpadSurfaceSettings
         VerticalFrictionScale = s?.VerticalFrictionScale ?? 1f,
         Smoothing = s?.Smoothing ?? 20f,
         RotationDegrees = s?.RotationDegrees ?? 0f,
-        MouseHaptics = s?.MouseHaptics ?? MouseHapticsIntensity.Medium
+        MouseHaptics = s?.MouseHaptics ?? MouseHapticsIntensity.Medium,
+        FlickSensitivity = s?.FlickSensitivity ?? 1.0f
     };
 }

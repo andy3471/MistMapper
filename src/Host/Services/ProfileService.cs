@@ -243,9 +243,9 @@ public sealed class ProfileService
     {
         var template = OfficialLayouts.Create(layoutId);
         template.MigrateLegacyButtonMap();
-        return template.InputMap.ToDictionary(
+        return template.Bindings.ToDictionary(
             kv => kv.Key,
-            kv => kv.Value.ToDisplayString(),
+            kv => string.Join(" | ", kv.Value.Select(b => b.ToDisplayString())),
             StringComparer.OrdinalIgnoreCase);
     }
 
@@ -267,10 +267,9 @@ public sealed class ProfileService
     static void CopyLayoutContent(ControllerProfile target, ControllerProfile template)
     {
         template.MigrateLegacyButtonMap();
-        target.InputMap = template.InputMap.ToDictionary(
-            kv => kv.Key,
-            kv => CloneAction(kv.Value),
-            StringComparer.OrdinalIgnoreCase);
+        target.Bindings = CloneBindings(template.Bindings);
+        target.InputMap = null;
+        target.LongPressMs = template.LongPressMs;
         target.LeftTrackpad = template.LeftTrackpad;
         target.RightTrackpad = template.RightTrackpad;
         target.LeftTrackpadSettings = TrackpadSurfaceSettings.Clone(template.LeftTrackpadSettings);
@@ -366,6 +365,23 @@ public sealed class ProfileService
         {
             var p = _doc.Profiles.First(x => x.Id == profileId);
             p.SetAction(inputId, action);
+            p.EnsureLockedMappings();
+            p.IsOfficial = false;
+            SaveUnlocked();
+        }
+        Changed?.Invoke();
+    }
+
+    /// <summary>Set one action slot on Regular or LongPress for an input (slot 0 or 1).</summary>
+    public void RemapBindingAction(string profileId, string inputId, ActivatorType activator, int slot, OutputAction action)
+    {
+        if (MappingLocks.IsLockedGuideInput(inputId))
+            throw new InvalidOperationException("Steam / Guide is locked to Xbox Guide and cannot be remapped.");
+
+        lock (_lock)
+        {
+            var p = _doc.Profiles.First(x => x.Id == profileId);
+            p.SetBindingAction(inputId, activator, slot, action);
             p.EnsureLockedMappings();
             p.IsOfficial = false;
             SaveUnlocked();
@@ -879,10 +895,9 @@ public sealed class ProfileService
             DriverId = p.DriverId,
             LayoutId = p.LayoutId,
             IsOfficial = p.IsOfficial,
-            InputMap = p.InputMap.ToDictionary(
-                kv => kv.Key,
-                kv => CloneAction(kv.Value),
-                StringComparer.OrdinalIgnoreCase),
+            Bindings = CloneBindings(p.Bindings),
+            InputMap = null,
+            LongPressMs = p.LongPressMs,
             LeftTrackpad = p.LeftTrackpad,
             RightTrackpad = p.RightTrackpad,
             LeftTrackpadSettings = TrackpadSurfaceSettings.Clone(p.LeftTrackpadSettings),
@@ -912,6 +927,12 @@ public sealed class ProfileService
         clone.EnsureLockedMappings();
         return clone;
     }
+
+    static Dictionary<string, List<InputBinding>> CloneBindings(Dictionary<string, List<InputBinding>> src) =>
+        src.ToDictionary(
+            kv => kv.Key,
+            kv => kv.Value.Select(InputBinding.Clone).ToList(),
+            StringComparer.OrdinalIgnoreCase);
 
     static OutputAction CloneAction(OutputAction a) => new()
     {

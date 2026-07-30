@@ -152,6 +152,16 @@ public sealed class IpcServer : IDisposable
                 break;
             }
 
+            case IpcCommands.SetBinding:
+            {
+                var p = Deserialize<SetBindingPayload>(request.Payload);
+                if (!Enum.TryParse<ActivatorType>(p.Activator, true, out var activator))
+                    throw new ArgumentException("Invalid activator");
+                _profiles.RemapBindingAction(
+                    p.ProfileId, p.InputId, activator, p.Slot, p.Action ?? OutputAction.None());
+                break;
+            }
+
             case IpcCommands.SetBridgeEnabled:
             {
                 var p = Deserialize<SetBridgeEnabledPayload>(request.Payload);

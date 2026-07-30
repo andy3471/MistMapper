@@ -7,8 +7,11 @@ public sealed class RecordingMouseSink : IMouseSink
 {
     public List<(int Dx, int Dy)> Moves { get; } = [];
     public List<(MouseButtonOutput Button, bool Down)> Buttons { get; } = [];
+    public List<int> Scrolls { get; } = [];
 
     public void Move(int dx, int dy) => Moves.Add((dx, dy));
 
     public void SetButton(MouseButtonOutput button, bool down) => Buttons.Add((button, down));
+
+    public void Scroll(int wheelDelta) => Scrolls.Add(wheelDelta);
 }

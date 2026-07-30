@@ -22,7 +22,9 @@ public enum MouseButtonOutput
 {
     Left,
     Right,
-    Middle
+    Middle,
+    ScrollUp,
+    ScrollDown
 }
 
 /// <summary>One remappable output: Xbox button, keyboard key, or mouse button.</summary>
@@ -53,7 +55,12 @@ public sealed class OutputAction
         {
             OutputActionKind.Xbox => Xbox.ToString(),
             OutputActionKind.Key => FormatKey(VirtualKey, Modifiers),
-            OutputActionKind.MouseButton => "Mouse" + MouseButton,
+            OutputActionKind.MouseButton => MouseButton switch
+            {
+                MouseButtonOutput.ScrollUp => "Scroll Up",
+                MouseButtonOutput.ScrollDown => "Scroll Down",
+                _ => "Mouse" + MouseButton
+            },
             _ => "None"
         };
     }

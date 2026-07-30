@@ -586,6 +586,9 @@ public sealed class BridgeService : IDisposable
                     if (allowKbMouse && slot.Mapper.TryConsumeMouseDelta(out int dx, out int dy))
                         _mouse.Move(dx, dy);
 
+                    if (allowKbMouse && slot.Mapper.TryConsumeMouseWheel(out int wheel))
+                        _mouse.Scroll(wheel);
+
                     while (slot.Mapper.TryConsumeMouseHaptic(out bool rightPad, out byte hapIntensity))
                         slot.Driver.PulseMouseHaptic(rightPad, hapIntensity);
 

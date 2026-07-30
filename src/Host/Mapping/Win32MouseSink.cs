@@ -15,6 +15,7 @@ public sealed class Win32MouseSink : IMouseSink
     const uint MouseRightUp = 0x0010;
     const uint MouseMiddleDown = 0x0020;
     const uint MouseMiddleUp = 0x0040;
+    const uint MouseWheel = 0x0800;
 
     [StructLayout(LayoutKind.Sequential)]
     struct Input
@@ -62,6 +63,18 @@ public sealed class Win32MouseSink : IMouseSink
         };
         if (flags == 0) return;
         var input = new Input { Type = InputMouse, Mi = new MouseInput { Flags = flags } };
+        if (SendInput(1, [input], Marshal.SizeOf<Input>()) != 1)
+            _ = Marshal.GetLastWin32Error();
+    }
+
+    public void Scroll(int wheelDelta)
+    {
+        if (wheelDelta == 0) return;
+        var input = new Input
+        {
+            Type = InputMouse,
+            Mi = new MouseInput { MouseData = unchecked((uint)wheelDelta), Flags = MouseWheel }
+        };
         if (SendInput(1, [input], Marshal.SizeOf<Input>()) != 1)
             _ = Marshal.GetLastWin32Error();
     }

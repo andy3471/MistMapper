@@ -9,34 +9,46 @@ public sealed class TrackpadModeTests
     readonly MappingEngine _engine = new();
 
     [Fact]
-    public void FlickStick_maps_strong_touch_to_right_stick_angle()
+    public void FlickStick_swipe_and_lift_produces_mouse_yaw()
     {
         var profile = OfficialLayouts.CreateGamepad();
         profile.LeftTrackpad = TrackpadMode.FlickStick;
+        profile.LeftTrackpadSettings.FlickSensitivity = 1f;
 
-        var frame = new InputFrame();
-        frame.Digitals["LeftTrackpad"] = true;
-        frame.Vectors["LeftTrackpad"] = (0.8f, 0.0f);
+        var a = new InputFrame();
+        a.Digitals["LeftTrackpad"] = true;
+        a.Vectors["LeftTrackpad"] = (0.6f, 0f);
+        _engine.Map(a, profile);
 
-        var state = _engine.Map(frame, profile);
+        var b = new InputFrame();
+        b.Digitals["LeftTrackpad"] = true;
+        b.Vectors["LeftTrackpad"] = (0f, 0.6f);
+        _engine.Map(b, profile);
 
-        state.ThumbRX.Should().NotBe(0, "flick stick should produce right stick output");
+        var lift = new InputFrame();
+        lift.Digitals["LeftTrackpad"] = false;
+        _engine.Map(lift, profile);
+
+        _engine.TryConsumeMouseDelta(out int dx, out _).Should().BeTrue();
+        dx.Should().NotBe(0, "flick arc on lift should produce horizontal mouse yaw");
     }
 
     [Fact]
-    public void FlickStick_weak_touch_produces_no_output()
+    public void FlickStick_weak_touch_produces_no_mouse_on_lift()
     {
         var profile = OfficialLayouts.CreateGamepad();
         profile.LeftTrackpad = TrackpadMode.FlickStick;
 
         var frame = new InputFrame();
         frame.Digitals["LeftTrackpad"] = true;
-        frame.Vectors["LeftTrackpad"] = (0.1f, 0.1f);
+        frame.Vectors["LeftTrackpad"] = (0.05f, 0.05f);
+        _engine.Map(frame, profile);
 
-        var state = _engine.Map(frame, profile);
+        var lift = new InputFrame();
+        lift.Digitals["LeftTrackpad"] = false;
+        _engine.Map(lift, profile);
 
-        state.ThumbRX.Should().Be(0);
-        state.ThumbRY.Should().Be(0);
+        _engine.TryConsumeMouseDelta(out _, out _).Should().BeFalse();
     }
 
     [Fact]
@@ -100,7 +112,7 @@ public sealed class TrackpadModeTests
     }
 
     [Fact]
-    public void ScrollWheel_produces_mouse_delta_on_vertical_swipe()
+    public void ScrollWheel_produces_wheel_on_vertical_swipe()
     {
         var profile = OfficialLayouts.CreateGamepad();
         profile.RightTrackpad = TrackpadMode.ScrollWheel;
@@ -115,8 +127,9 @@ public sealed class TrackpadModeTests
         frame2.Vectors["RightTrackpad"] = (0f, 0.5f);
         _engine.Map(frame2, profile);
 
-        _engine.TryConsumeMouseDelta(out _, out int dy).Should().BeTrue();
-        dy.Should().NotBe(0, "vertical swipe in scroll mode should produce vertical mouse delta");
+        _engine.TryConsumeMouseWheel(out int wheel).Should().BeTrue();
+        wheel.Should().NotBe(0, "vertical swipe in scroll mode should produce wheel ticks");
+        _engine.TryConsumeMouseDelta(out _, out _).Should().BeFalse("scroll mode must not move the cursor");
     }
 
     [Fact]

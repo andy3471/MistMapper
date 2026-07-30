@@ -32,8 +32,20 @@ public sealed class MappingEngine
     readonly Queue<(bool RightPad, byte Intensity)> _mouseHapticTicks = new();
     readonly HashSet<string> _heldKeys = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> _heldMouse = new(StringComparer.OrdinalIgnoreCase);
+    readonly Dictionary<string, long> _pressStarted = new(StringComparer.OrdinalIgnoreCase);
+    readonly HashSet<string> _longFired = new(StringComparer.OrdinalIgnoreCase);
+    readonly HashSet<string> _prevDigitalPressed = new(StringComparer.OrdinalIgnoreCase);
+    readonly Dictionary<string, FlickPadState> _flickPads = new(StringComparer.OrdinalIgnoreCase);
+    double _wheelAccum;
     bool _gyroToggleOn;
     bool _gyroTogglePrevPressed;
+
+    sealed class FlickPadState
+    {
+        public float LastAngle;
+        public float AccumYaw;
+        public bool HasAngle;
+    }
 
     public MappingEngine(IKeyboardSink? keyboard = null, IMouseSink? mouse = null)
     {
@@ -59,8 +71,7 @@ public sealed class MappingEngine
 
         void ApplyDigital(string inputId, bool pressed)
         {
-            if (!pressed) return;
-            ApplyAction(profile.GetAction(inputId), 1f, ref outState, ref buttons, desiredKeys, desiredMouse);
+            ApplyDigitalBindings(inputId, pressed, profile, ref outState, ref buttons, desiredKeys, desiredMouse);
         }
 
         foreach (var (id, pressed) in frame.Digitals)
@@ -78,6 +89,17 @@ public sealed class MappingEngine
             }
 
             ApplyDigital(id, pressed);
+        }
+
+        // Clear press state for digitals no longer reported.
+        foreach (var id in _pressStarted.Keys.ToList())
+        {
+            if (!frame.Digitals.ContainsKey(id) || !frame.GetDigital(id))
+            {
+                _pressStarted.Remove(id);
+                _longFired.Remove(id);
+                _prevDigitalPressed.Remove(id);
+            }
         }
 
         ApplyAnalogTrigger(profile.GetAction("Lt"), ScaleAnalog(frame.GetAnalog("Lt"), profile.TriggerDeadzone), ref outState, ref buttons, desiredKeys, desiredMouse);
@@ -201,6 +223,77 @@ public sealed class MappingEngine
         _mouseJoyLastTick = 0;
     }
 
+    void ApplyDigitalBindings(
+        string inputId,
+        bool pressed,
+        ControllerProfile profile,
+        ref Xbox360InputState state,
+        ref uint buttons,
+        HashSet<string> desiredKeys,
+        HashSet<string> desiredMouse)
+    {
+        if (!pressed)
+        {
+            _pressStarted.Remove(inputId);
+            _longFired.Remove(inputId);
+            _prevDigitalPressed.Remove(inputId);
+            return;
+        }
+
+        long now = Stopwatch.GetTimestamp();
+        bool rising = _prevDigitalPressed.Add(inputId);
+        if (!_pressStarted.ContainsKey(inputId))
+            _pressStarted[inputId] = now;
+
+        bool hadLong = _longFired.Contains(inputId);
+        bool longActive = hadLong;
+        if (!longActive)
+        {
+            double heldMs = (now - _pressStarted[inputId]) * 1000.0 / Stopwatch.Frequency;
+            bool hasLong = profile.GetBindings(inputId)
+                .Any(b => b.Activator == ActivatorType.LongPress && b.Actions.Any(a => a.Kind != OutputActionKind.None));
+            if (hasLong && heldMs >= Math.Max(50, profile.LongPressMs))
+            {
+                _longFired.Add(inputId);
+                longActive = true;
+            }
+        }
+        bool longJustFired = longActive && !hadLong;
+
+        foreach (var binding in profile.GetBindings(inputId))
+        {
+            if (binding.Activator == ActivatorType.Regular && longActive)
+                continue;
+            if (binding.Activator == ActivatorType.LongPress && !longActive)
+                continue;
+
+            bool edge = rising || (binding.Activator == ActivatorType.LongPress && longJustFired);
+            foreach (var action in binding.Actions)
+            {
+                if (action.Kind == OutputActionKind.None) continue;
+                if (IsScrollAction(action))
+                {
+                    if (edge) AddScrollAction(action);
+                    continue;
+                }
+
+                ApplyAction(action, 1f, ref state, ref buttons, desiredKeys, desiredMouse);
+            }
+        }
+    }
+
+    static bool IsScrollAction(OutputAction action) =>
+        action.Kind == OutputActionKind.MouseButton
+        && action.MouseButton is MouseButtonOutput.ScrollUp or MouseButtonOutput.ScrollDown;
+
+    void AddScrollAction(OutputAction action)
+    {
+        if (action.MouseButton == MouseButtonOutput.ScrollUp)
+            _wheelAccum += 120;
+        else if (action.MouseButton == MouseButtonOutput.ScrollDown)
+            _wheelAccum -= 120;
+    }
+
     static void ApplyAction(
         OutputAction action,
         float strength,
@@ -223,6 +316,8 @@ public sealed class MappingEngine
                 break;
             case OutputActionKind.Key when action.VirtualKey > 0:
                 desiredKeys.Add(KeyToken(action));
+                break;
+            case OutputActionKind.MouseButton when IsScrollAction(action):
                 break;
             case OutputActionKind.MouseButton:
                 desiredMouse.Add(action.MouseButton.ToString());
@@ -286,6 +381,8 @@ public sealed class MappingEngine
 
         if (!touching)
         {
+            if (mode == TrackpadMode.FlickStick)
+                FinishFlick(id, surface);
             _padMouseLast.Remove(id);
             _padSmooth.Remove(id);
             ClearMouseHapticState(id);
@@ -336,12 +433,7 @@ public sealed class MappingEngine
                 ApplyRelativePadMouse(id, nx, ny, surface, sensX, sensY, invX, invY, mouseJoystick: true);
                 break;
             case TrackpadMode.FlickStick:
-                if (Math.Abs(ax) > 0.5f || Math.Abs(ay) > 0.5f)
-                {
-                    float angle = MathF.Atan2(ax, ay);
-                    state.ThumbRX = ClampToShort(MathF.Sin(angle) * 32767f);
-                    state.ThumbRY = ClampToShort(MathF.Cos(angle) * 32767f);
-                }
+                UpdateFlick(id, ax, ay, surface);
                 break;
             case TrackpadMode.ScrollWheel:
                 if (!_padMouseLast.TryGetValue(id, out var scrollLast))
@@ -350,7 +442,9 @@ public sealed class MappingEngine
                     break;
                 }
                 _padMouseLast[id] = (nx, ny);
-                _mouseAccumY += -(ny - scrollLast.Y) * 120f * sensY * (invY ? -1 : 1);
+                float scrollDy = -(ny - scrollLast.Y) * sensY * (invY ? -1 : 1);
+                // Pad Δ of ~0.1 ≈ one notch.
+                _wheelAccum += scrollDy * 1200f;
                 break;
             case TrackpadMode.ButtonPad:
                 const short bpThresh = 10000;
@@ -674,6 +768,44 @@ public sealed class MappingEngine
         }
     }
 
+    void UpdateFlick(string id, float ax, float ay, TrackpadSurfaceSettings surface)
+    {
+        float mag = MathF.Sqrt(ax * ax + ay * ay);
+        if (mag < 0.15f)
+            return;
+
+        float angle = MathF.Atan2(ax, ay);
+        if (!_flickPads.TryGetValue(id, out var flick))
+        {
+            _flickPads[id] = new FlickPadState { LastAngle = angle, HasAngle = true };
+            return;
+        }
+
+        if (!flick.HasAngle)
+        {
+            flick.LastAngle = angle;
+            flick.HasAngle = true;
+            return;
+        }
+
+        float delta = angle - flick.LastAngle;
+        // Wrap to [-π, π]
+        while (delta > MathF.PI) delta -= MathF.Tau;
+        while (delta < -MathF.PI) delta += MathF.Tau;
+        flick.AccumYaw += delta;
+        flick.LastAngle = angle;
+    }
+
+    void FinishFlick(string id, TrackpadSurfaceSettings surface)
+    {
+        if (!_flickPads.Remove(id, out var flick) || !flick.HasAngle)
+            return;
+
+        // Radians of pad arc → mouse yaw pixels.
+        float sens = Math.Clamp(surface.FlickSensitivity, 0.1f, 5f);
+        _mouseAccumX += flick.AccumYaw * (480f * sens);
+    }
+
     public bool TryConsumeMouseDelta(out int dx, out int dy)
     {
         dx = (int)_mouseAccumX;
@@ -681,6 +813,19 @@ public sealed class MappingEngine
         if (dx == 0 && dy == 0) return false;
         _mouseAccumX -= dx;
         _mouseAccumY -= dy;
+        return true;
+    }
+
+    public bool TryConsumeMouseWheel(out int wheelDelta)
+    {
+        if (Math.Abs(_wheelAccum) < 120)
+        {
+            wheelDelta = 0;
+            return false;
+        }
+
+        wheelDelta = (int)(_wheelAccum / 120) * 120;
+        _wheelAccum -= wheelDelta;
         return true;
     }
 
@@ -692,6 +837,11 @@ public sealed class MappingEngine
         _padSmooth.Clear();
         _mouseHapticAccum.Clear();
         _mouseHapticTicks.Clear();
+        _pressStarted.Clear();
+        _longFired.Clear();
+        _prevDigitalPressed.Clear();
+        _flickPads.Clear();
+        _wheelAccum = 0;
         _gyroToggleOn = false;
         _gyroTogglePrevPressed = false;
         foreach (var token in _heldKeys.ToList())
@@ -699,7 +849,8 @@ public sealed class MappingEngine
         _heldKeys.Clear();
         foreach (var btn in _heldMouse.ToList())
         {
-            if (Enum.TryParse<MouseButtonOutput>(btn, true, out var b))
+            if (Enum.TryParse<MouseButtonOutput>(btn, true, out var b)
+                && b is not (MouseButtonOutput.ScrollUp or MouseButtonOutput.ScrollDown))
                 _mouse.SetButton(b, false);
         }
         _heldMouse.Clear();
@@ -734,6 +885,7 @@ public sealed class MappingEngine
         {
             if (_heldMouse.Contains(btn)) continue;
             if (!Enum.TryParse<MouseButtonOutput>(btn, true, out var b)) continue;
+            if (b is MouseButtonOutput.ScrollUp or MouseButtonOutput.ScrollDown) continue;
             _mouse.SetButton(b, true);
             _heldMouse.Add(btn);
         }

@@ -366,13 +366,14 @@
                     <TextBlock x:Name="RemapSubtitle"
                                Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
                                FontSize="13" Margin="0,2,0,0"/>
-                    <TextBlock Text="X / B switch type · Back arrow to cancel"
+                    <TextBlock x:Name="RemapHint"
+                               Text="Back arrow to go back"
                                Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
                                FontSize="12" Margin="0,2,0,0"/>
                 </StackPanel>
             </Grid>
 
-            <Grid Grid.Row="1" Margin="16,6,16,12">
+            <Grid x:Name="RemapTabsRow" Grid.Row="1" Margin="16,6,16,12" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>

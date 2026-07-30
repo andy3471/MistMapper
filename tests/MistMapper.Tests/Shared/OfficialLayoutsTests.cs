@@ -14,7 +14,7 @@ public sealed class OfficialLayoutsTests
         var profile = OfficialLayouts.Create(layoutId);
 
         profile.LayoutId.Should().Be(layoutId);
-        profile.InputMap.Should().ContainKey("Steam");
+        profile.Bindings.Should().ContainKey("Steam");
         profile.GetAction("Steam").Xbox.Should().Be(XboxOutput.Guide);
     }
 

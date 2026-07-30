@@ -161,6 +161,12 @@ namespace MistMapper.GameBarWidget
         string _activeProfileId = "";
         string _remapInputId = "";
         string _remapTab = "Gamepad";
+        string _remapActivator = "Regular";
+        int _remapSlot;
+        /// <summary>False = command list; true = old Gamepad/Keyboard/Mouse picker for one slot.</summary>
+        bool _remapPickMode;
+        readonly Dictionary<string, List<(string Activator, List<string> Actions)>> _bindingsByInput =
+            new Dictionary<string, List<(string, List<string>)>>(StringComparer.OrdinalIgnoreCase);
         string _activeViewTab = "View";
         string _activeEditCategory = "Buttons";
         string _controllerModel = ""; // "" when disconnected; "sc1" / "sc2" when connected
@@ -254,6 +260,10 @@ namespace MistMapper.GameBarWidget
         readonly Dictionary<string, string> _mouseHaptics = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["left"] = "Medium", ["right"] = "Medium"
+        };
+        readonly Dictionary<string, double> _flickSensitivity = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["left"] = 1, ["right"] = 1
         };
 
         public WidgetPage()
@@ -1229,10 +1239,16 @@ namespace MistMapper.GameBarWidget
 
             if (RemapView.Visibility == Visibility.Visible)
             {
-                if (key == Windows.System.VirtualKey.GamepadX)
+                if (_remapPickMode && key == Windows.System.VirtualKey.GamepadX)
                 { CycleRemapTab(-1); e.Handled = true; }
-                else if (key == Windows.System.VirtualKey.GamepadB)
+                else if (_remapPickMode && key == Windows.System.VirtualKey.GamepadB)
                 { CycleRemapTab(1); e.Handled = true; }
+                else if (!_remapPickMode && (key == Windows.System.VirtualKey.GamepadB
+                    || key == Windows.System.VirtualKey.Escape))
+                {
+                    RemapCancel_Click(this, new RoutedEventArgs());
+                    e.Handled = true;
+                }
                 else if (key == Windows.System.VirtualKey.Escape)
                 {
                     RemapCancel_Click(this, new RoutedEventArgs());
@@ -1488,7 +1504,8 @@ namespace MistMapper.GameBarWidget
             + "\"verticalFrictionScale\":" + _padVertFriction[side].ToString(CultureInfo.InvariantCulture) + ","
             + "\"smoothing\":" + _padSmoothing[side].ToString(CultureInfo.InvariantCulture) + ","
             + "\"rotationDegrees\":" + _padRotation[side].ToString(CultureInfo.InvariantCulture) + ","
-            + "\"mouseHaptics\":\"" + _mouseHaptics[side] + "\""
+            + "\"mouseHaptics\":\"" + _mouseHaptics[side] + "\","
+            + "\"flickSensitivity\":" + _flickSensitivity[side].ToString(CultureInfo.InvariantCulture)
             + "}";
 
         async void AdvancedSettingsCog_Click(object sender, RoutedEventArgs e)
@@ -1648,6 +1665,7 @@ namespace MistMapper.GameBarWidget
             var draftSmooth = _padSmoothing[side];
             var draftRot = _padRotation[side];
             var draftHaptics = _mouseHaptics[side];
+            var draftFlick = _flickSensitivity[side];
 
             AdvancedSettingsContent.Children.Clear();
             AdvancedSettingsTitle.Text = ModeSurfaceLabel(side);
@@ -1671,6 +1689,12 @@ namespace MistMapper.GameBarWidget
                 MouseHapticsIntensities, MouseHapticsIntensities.Select(FormatModeLabel).ToArray(),
                 draftHaptics, v => draftHaptics = v));
             AdvancedSettingsContent.Children.Add(Hint("Steam-style ticks while sliding as mouse / mouse joystick."));
+
+            AdvancedSettingsContent.Children.Add(SectionLabel("Flick Stick"));
+            var flick = MakeStyledSlider("Flick Sensitivity %", 10, 300, 5, draftFlick * 100);
+            flick.ValueChanged += (_, ev) => draftFlick = ev.NewValue / 100.0;
+            AdvancedSettingsContent.Children.Add(flick);
+            AdvancedSettingsContent.Children.Add(Hint("Yaw pixels from pad arc when you flick and lift."));
 
             AdvancedSettingsContent.Children.Add(SectionLabel("Feel"));
             var vFric = MakeStyledSlider("Vertical Friction Scale %", 10, 300, 5, draftVert * 100);
@@ -1697,6 +1721,7 @@ namespace MistMapper.GameBarWidget
             _padSmoothing[side] = draftSmooth;
             _padRotation[side] = draftRot;
             _mouseHaptics[side] = draftHaptics;
+            _flickSensitivity[side] = draftFlick;
             await SendSensitivityAsync();
         }
 
@@ -1840,6 +1865,7 @@ namespace MistMapper.GameBarWidget
             _padSmoothing[side] = obj.GetNamedNumber("smoothing", 20);
             _padRotation[side] = obj.GetNamedNumber("rotationDegrees", 0);
             _mouseHaptics[side] = obj.GetNamedString("mouseHaptics", "Medium");
+            _flickSensitivity[side] = obj.GetNamedNumber("flickSensitivity", 1);
         }
 
         // ═══════════════ Edit panel: category tabs + content ═══════════════
@@ -2253,10 +2279,49 @@ namespace MistMapper.GameBarWidget
 
         string GetCurrentMappedDisplay()
         {
-            if (string.IsNullOrEmpty(_remapInputId) || !_inputMap.ContainsKey(_remapInputId))
+            if (string.IsNullOrEmpty(_remapInputId))
+                return "None";
+
+            if (_remapPickMode)
+            {
+                foreach (var (activator, slot, display) in GetCommandRows(_remapInputId))
+                {
+                    if (string.Equals(activator, _remapActivator, StringComparison.OrdinalIgnoreCase)
+                        && slot == _remapSlot)
+                        return string.IsNullOrEmpty(display) ? "None" : display;
+                }
+                return "None";
+            }
+
+            if (!_inputMap.ContainsKey(_remapInputId))
                 return "None";
             var mapped = _inputMap[_remapInputId];
             return string.IsNullOrEmpty(mapped) ? "None" : mapped;
+        }
+
+        int CountActivatorActions(string inputId, string activator)
+        {
+            if (!_bindingsByInput.TryGetValue(inputId, out var groups))
+                return 0;
+            foreach (var g in groups)
+            {
+                if (string.Equals(g.Activator, activator, StringComparison.OrdinalIgnoreCase))
+                    return g.Actions.Count;
+            }
+            return 0;
+        }
+
+        IEnumerable<(string Activator, int Slot, string Display)> GetCommandRows(string inputId)
+        {
+            if (!_bindingsByInput.TryGetValue(inputId, out var groups))
+                yield break;
+
+            foreach (var g in groups
+                .OrderBy(x => string.Equals(x.Activator, "LongPress", StringComparison.OrdinalIgnoreCase) ? 1 : 0))
+            {
+                for (var i = 0; i < g.Actions.Count; i++)
+                    yield return (g.Activator, i, g.Actions[i]);
+            }
         }
 
         static readonly string[] RemapTabOrder = { "Gamepad", "Keyboard", "Mouse", "None" };
@@ -2269,7 +2334,7 @@ namespace MistMapper.GameBarWidget
 
         void CycleRemapTab(int delta)
         {
-            if (RemapView.Visibility != Visibility.Visible) return;
+            if (RemapView.Visibility != Visibility.Visible || !_remapPickMode) return;
             var idx = Array.FindIndex(RemapTabOrder, t =>
                 string.Equals(t, _remapTab, StringComparison.OrdinalIgnoreCase));
             if (idx < 0) idx = 0;
@@ -2285,8 +2350,7 @@ namespace MistMapper.GameBarWidget
             else
                 _stickyMods = 0;
 
-            BuildRemapGrid();
-            HighlightRemapTabs();
+            RebuildRemapUi();
             BringActiveRemapTabIntoView();
         }
 
@@ -2445,22 +2509,33 @@ namespace MistMapper.GameBarWidget
             if (IsLockedGuideInput(inputId)) return;
 
             _remapInputId = inputId;
-            ResolveRemapTabFromCurrentBinding();
-
-            var label = GetInputLabel(inputId);
-            var mapped = GetCurrentMappedDisplay();
-            RemapTitle.Text = "Select a command for " + label;
-            RemapSubtitle.Text = "Currently: " + mapped;
+            _remapPickMode = false;
+            _remapActivator = "Regular";
+            _remapSlot = 0;
 
             MainView.Visibility = Visibility.Collapsed;
             RemapView.Visibility = Visibility.Visible;
+            RebuildRemapUi();
+        }
 
-            BuildRemapGrid();
-            HighlightRemapTabs();
+        void EnterRemapPickMode(string activator, int slot)
+        {
+            _remapPickMode = true;
+            _remapActivator = activator;
+            _remapSlot = Math.Clamp(slot, 0, 1);
+            ResolveRemapTabFromCurrentBinding();
+            RebuildRemapUi();
         }
 
         void RemapCancel_Click(object sender, RoutedEventArgs e)
         {
+            if (_remapPickMode)
+            {
+                _remapPickMode = false;
+                RebuildRemapUi();
+                return;
+            }
+
             RemapView.Visibility = Visibility.Collapsed;
             MainView.Visibility = Visibility.Visible;
         }
@@ -2480,9 +2555,163 @@ namespace MistMapper.GameBarWidget
                 : (Style)Application.Current.Resources["PillButtonStyle"];
         }
 
-        void BuildRemapGrid()
+        void RebuildRemapUi()
+        {
+            if (_remapPickMode)
+                BuildRemapPicker();
+            else
+                BuildRemapCommandList();
+        }
+
+        void BuildRemapCommandList()
         {
             RemapGrid.Children.Clear();
+            RemapTabsRow.Visibility = Visibility.Collapsed;
+
+            var label = GetInputLabel(_remapInputId);
+            RemapTitle.Text = "Commands for " + label;
+            RemapSubtitle.Text = "Steam-style: one command, then optional sub commands / long press.";
+            RemapHint.Text = "Back arrow returns to Edit";
+
+            var rows = GetCommandRows(_remapInputId).ToList();
+            if (rows.Count == 0)
+            {
+                RemapGrid.Children.Add(Hint("No commands yet. Add a command to start."));
+            }
+            else
+            {
+                RemapGrid.Children.Add(SectionLabel("Bound commands"));
+                foreach (var row in rows)
+                    RemapGrid.Children.Add(BuildCommandRow(row.Activator, row.Slot, row.Display));
+            }
+
+            var regularCount = CountActivatorActions(_remapInputId, "Regular");
+            var longCount = CountActivatorActions(_remapInputId, "LongPress");
+
+            RemapGrid.Children.Add(SectionLabel("Add"));
+            if (regularCount < 2)
+            {
+                var addLabel = regularCount == 0 ? "Add command" : "Add sub command";
+                RemapGrid.Children.Add(BuildAddCommandButton(addLabel, "Regular", regularCount));
+            }
+            if (longCount < 2)
+            {
+                var addLabel = longCount == 0 ? "Add long press" : "Add long press sub command";
+                RemapGrid.Children.Add(BuildAddCommandButton(addLabel, "LongPress", longCount));
+            }
+            if (regularCount >= 2 && longCount >= 2)
+                RemapGrid.Children.Add(Hint("This input already has the maximum of two regular and two long-press commands."));
+            else
+                RemapGrid.Children.Add(Hint("Long press fires after ~400 ms and replaces regular while held."));
+        }
+
+        UIElement BuildCommandRow(string activator, int slot, string display)
+        {
+            var isLong = string.Equals(activator, "LongPress", StringComparison.OrdinalIgnoreCase);
+            var kindLabel = isLong
+                ? (slot == 0 ? "Long press" : "Long press · sub")
+                : (slot == 0 ? "Command" : "Sub command");
+
+            var grid = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var textStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            textStack.Children.Add(new TextBlock
+            {
+                Text = kindLabel,
+                FontSize = 12,
+                Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseMediumBrush"]
+            });
+            textStack.Children.Add(new TextBlock
+            {
+                Text = display,
+                FontSize = 15,
+                FontWeight = Windows.UI.Text.FontWeights.SemiBold,
+                Foreground = (Windows.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SystemControlForegroundBaseHighBrush"]
+            });
+
+            var editBtn = new Button
+            {
+                Content = textStack,
+                Tag = activator + "\t" + slot.ToString(CultureInfo.InvariantCulture),
+                Style = (Style)Application.Current.Resources["PillButtonStyle"],
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Padding = new Thickness(16, 12, 16, 12),
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            editBtn.Click += (s, e) =>
+            {
+                if (!(s is Button b) || !(b.Tag is string tag)) return;
+                var parts = tag.Split('\t');
+                if (parts.Length != 2) return;
+                if (!int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var rowSlot))
+                    return;
+                EnterRemapPickMode(parts[0], rowSlot);
+            };
+            Grid.SetColumn(editBtn, 0);
+            grid.Children.Add(editBtn);
+
+            var removeBtn = new Button
+            {
+                Content = "Remove",
+                Tag = activator + "\t" + slot.ToString(CultureInfo.InvariantCulture),
+                Style = (Style)Application.Current.Resources["PillButtonStyle"],
+                Padding = new Thickness(14, 12, 14, 12),
+                FontSize = 13,
+                VerticalAlignment = VerticalAlignment.Stretch
+            };
+            removeBtn.Click += async (s, e) =>
+            {
+                if (!(s is Button b) || !(b.Tag is string tag)) return;
+                var parts = tag.Split('\t');
+                if (parts.Length != 2) return;
+                if (!int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var rowSlot))
+                    return;
+                _remapActivator = parts[0];
+                _remapSlot = rowSlot;
+                await ApplyBindingAsync("none", "", "0", returnToList: true);
+            };
+            Grid.SetColumn(removeBtn, 1);
+            grid.Children.Add(removeBtn);
+
+            return grid;
+        }
+
+        Button BuildAddCommandButton(string label, string activator, int slot)
+        {
+            var btn = new Button
+            {
+                Content = label,
+                Style = (Style)Application.Current.Resources["PillAccentButtonStyle"],
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Padding = new Thickness(16, 12, 16, 12),
+                Margin = new Thickness(0, 0, 0, 8),
+                FontSize = 14
+            };
+            btn.Click += (s, e) => EnterRemapPickMode(activator, slot);
+            return btn;
+        }
+
+        void BuildRemapPicker()
+        {
+            RemapGrid.Children.Clear();
+            RemapTabsRow.Visibility = Visibility.Visible;
+
+            var label = GetInputLabel(_remapInputId);
+            var mapped = GetCurrentMappedDisplay();
+            var isLong = string.Equals(_remapActivator, "LongPress", StringComparison.OrdinalIgnoreCase);
+            var slotLabel = isLong
+                ? (_remapSlot == 0 ? "Long press" : "Long press · sub command")
+                : (_remapSlot == 0 ? "Command" : "Sub command");
+
+            RemapTitle.Text = "Select a command for " + label;
+            RemapSubtitle.Text = slotLabel + " · Currently: " + mapped;
+            RemapHint.Text = "X / B switch type · Back arrow cancels";
+
+            HighlightRemapTabs();
 
             if (_remapTab == "Gamepad")
                 BuildGamepadGrid();
@@ -2498,7 +2727,7 @@ namespace MistMapper.GameBarWidget
         {
             RemapGrid.Children.Add(new TextBlock
             {
-                Text = "Remove the current binding for this input.",
+                Text = "Remove the current binding for this command slot.",
                 FontSize = 13,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 0, 0, 12),
@@ -2512,7 +2741,10 @@ namespace MistMapper.GameBarWidget
                 Padding = new Thickness(20, 12, 20, 12),
                 FontSize = 14
             };
-            clear.Click += async (s, e) => await ApplyRemapAsync("none", "", "0");
+            clear.Click += async (s, e) =>
+            {
+                await ApplyBindingAsync("none", "", "0", returnToList: true);
+            };
             RemapGrid.Children.Add(clear);
         }
 
@@ -2623,13 +2855,13 @@ namespace MistMapper.GameBarWidget
             {
                 _stickyMods |= flag;
                 if (_remapTab == "Keyboard")
-                    BuildRemapGrid();
+                    RebuildRemapUi();
             };
             toggle.Unchecked += (s, _) =>
             {
                 _stickyMods &= ~flag;
                 if (_remapTab == "Keyboard")
-                    BuildRemapGrid();
+                    RebuildRemapUi();
             };
             panel.Children.Add(toggle);
         }
@@ -2666,10 +2898,13 @@ namespace MistMapper.GameBarWidget
             var value = parts[1];
             var mods = kind == "key" ? _stickyMods.ToString(CultureInfo.InvariantCulture) : "0";
 
-            await ApplyRemapAsync(kind, value, mods);
+            await ApplyBindingAsync(kind, value, mods, returnToList: true);
         }
 
-        async Task ApplyRemapAsync(string kind, string value, string mods)
+        async Task ApplyRemapAsync(string kind, string value, string mods) =>
+            await ApplyBindingAsync(kind, value, mods, returnToList: true);
+
+        async Task ApplyBindingAsync(string kind, string value, string mods, bool returnToList = true)
         {
             if (string.IsNullOrEmpty(_remapInputId) || string.IsNullOrEmpty(_activeProfileId))
                 return;
@@ -2677,15 +2912,27 @@ namespace MistMapper.GameBarWidget
             if (!await EnsureSharedBindingsEditAllowedAsync())
                 return;
 
-            var payload = _activeProfileId + "\t" + _remapInputId + "\t" + kind + "\t" + value + "\t" + mods;
-            var resp = await IpcClient.SendAsync("remapAction", payload);
+            // profileId \t inputId \t activator \t slot \t kind \t value [\t modifiers]
+            var payload = _activeProfileId + "\t" + _remapInputId + "\t" + _remapActivator + "\t"
+                + _remapSlot.ToString(CultureInfo.InvariantCulture) + "\t" + kind + "\t" + value + "\t" + mods;
+            var resp = await IpcClient.SendAsync("setBinding", payload);
             StatusText.Text = resp.IsOk
                 ? (_remapInputId + (kind == "none" ? " cleared" : " remapped to " + value))
                 : (resp.Error ?? "Remap failed");
 
-            RemapView.Visibility = Visibility.Collapsed;
-            MainView.Visibility = Visibility.Visible;
+            if (!resp.IsOk)
+                return;
+
+            _remapPickMode = false;
             await RefreshAsync(force: true);
+
+            if (returnToList && RemapView.Visibility == Visibility.Visible)
+                RebuildRemapUi();
+            else
+            {
+                RemapView.Visibility = Visibility.Collapsed;
+                MainView.Visibility = Visibility.Visible;
+            }
         }
 
         // ═══════════════ View panel: controller callouts (read-only) ═══════════════
@@ -3117,6 +3364,8 @@ namespace MistMapper.GameBarWidget
                         _inputMap[key] = map.GetNamedString(key);
                 }
 
+                ParseBindingsState(state);
+
                 var layoutChanged = false;
                 if (state.ContainsKey("layout"))
                 {
@@ -3150,11 +3399,50 @@ namespace MistMapper.GameBarWidget
                     RebuildLayoutLabels();
                     if (_activeViewTab == "Edit")
                         RebuildEditCategoryContent();
+                    if (RemapView.Visibility == Visibility.Visible && !_remapPickMode)
+                        RebuildRemapUi();
                 }
             }
             finally
             {
                 _suppress = false;
+            }
+        }
+
+        void ParseBindingsState(JsonObject state)
+        {
+            _bindingsByInput.Clear();
+            if (!state.ContainsKey("bindings"))
+                return;
+
+            var root = state.GetNamedObject("bindings");
+            foreach (var key in root.Keys)
+            {
+                var arr = root.GetNamedArray(key);
+                var groups = new List<(string Activator, List<string> Actions)>();
+                foreach (var item in arr)
+                {
+                    var obj = item.GetObject();
+                    var activator = obj.GetNamedString("activator", "Regular");
+                    var actions = new List<string>();
+                    if (obj.ContainsKey("actions"))
+                    {
+                        foreach (var actionItem in obj.GetNamedArray("actions"))
+                        {
+                            var actionObj = actionItem.GetObject();
+                            var kind = actionObj.GetNamedString("kind", "None");
+                            if (string.Equals(kind, "None", StringComparison.OrdinalIgnoreCase))
+                                continue;
+                            var display = actionObj.GetNamedString("display", "");
+                            if (!string.IsNullOrEmpty(display))
+                                actions.Add(display);
+                        }
+                    }
+                    if (actions.Count > 0)
+                        groups.Add((activator, actions));
+                }
+                if (groups.Count > 0)
+                    _bindingsByInput[key] = groups;
             }
         }
 

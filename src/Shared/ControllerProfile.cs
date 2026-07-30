@@ -14,12 +14,19 @@ public sealed class ControllerProfile
     /// <summary>True for stock official profiles seeded by the app.</summary>
     public bool IsOfficial { get; set; }
 
-    /// <summary>Input id → action. Preferred mapping store.</summary>
-    public Dictionary<string, OutputAction> InputMap { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Input id → activator bindings (Regular / LongPress, up to 2 actions each).</summary>
+    public Dictionary<string, List<InputBinding>> Bindings { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Legacy Xbox-only map; migrated into <see cref="InputMap"/> on load.</summary>
+    /// <summary>Legacy 1:1 map; migrated into <see cref="Bindings"/> on load.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Dictionary<string, OutputAction>? InputMap { get; set; }
+
+    /// <summary>Legacy Xbox-only map; migrated into <see cref="InputMap"/> then <see cref="Bindings"/> on load.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public Dictionary<string, string>? ButtonMap { get; set; }
+
+    /// <summary>Hold duration before LongPress activators fire (ms).</summary>
+    public int LongPressMs { get; set; } = 400;
 
     public TrackpadMode LeftTrackpad { get; set; } = TrackpadMode.Off;
     public TrackpadMode RightTrackpad { get; set; } = TrackpadMode.Off;
@@ -68,7 +75,7 @@ public sealed class ControllerProfile
             IsOfficial = true
         };
         foreach (var (src, dst) in DefaultButtonPairs)
-            p.InputMap[src.ToString()] = OutputAction.FromXbox(dst);
+            p.SetAction(src.ToString(), OutputAction.FromXbox(dst));
         return p;
     }
 
@@ -109,6 +116,8 @@ public sealed class ControllerProfile
         if (string.IsNullOrWhiteSpace(DriverId))
             DriverId = DriverIds.SteamController;
 
+        InputMap ??= new Dictionary<string, OutputAction>(StringComparer.OrdinalIgnoreCase);
+
         if (ButtonMap is { Count: > 0 })
         {
             foreach (var (key, value) in ButtonMap)
@@ -120,20 +129,78 @@ public sealed class ControllerProfile
             ButtonMap = null;
         }
 
-        // Normalize dictionary comparer after deserialize
         if (InputMap.Comparer != StringComparer.OrdinalIgnoreCase)
             InputMap = new Dictionary<string, OutputAction>(InputMap, StringComparer.OrdinalIgnoreCase);
 
+        if (Bindings.Comparer != StringComparer.OrdinalIgnoreCase)
+            Bindings = new Dictionary<string, List<InputBinding>>(Bindings, StringComparer.OrdinalIgnoreCase);
+
+        MigrateInputMapToBindings();
         EnsureLockedMappings();
+
+        if (LongPressMs < 50)
+            LongPressMs = 400;
     }
 
+    /// <summary>Fold legacy <see cref="InputMap"/> entries into <see cref="Bindings"/> then clear InputMap.</summary>
+    public void MigrateInputMapToBindings()
+    {
+        if (InputMap is { Count: > 0 })
+        {
+            foreach (var (key, action) in InputMap)
+            {
+                if (action is null || action.Kind == OutputActionKind.None) continue;
+                if (Bindings.ContainsKey(key)) continue;
+                Bindings[key] = [InputBinding.FromAction(action)];
+            }
+            InputMap = null;
+        }
+    }
+
+    public IReadOnlyList<InputBinding> GetBindings(string inputId)
+    {
+        if (MappingLocks.IsLockedGuideInput(inputId))
+            return [InputBinding.FromAction(MappingLocks.LockedGuideAction)];
+
+        if (Bindings.TryGetValue(inputId, out var list) && list is { Count: > 0 })
+            return list;
+        return [];
+    }
+
+    public InputBinding GetOrCreateBinding(string inputId, ActivatorType activator)
+    {
+        if (MappingLocks.IsLockedGuideInput(inputId))
+            return InputBinding.FromAction(MappingLocks.LockedGuideAction);
+
+        if (!Bindings.TryGetValue(inputId, out var list) || list is null)
+        {
+            list = [];
+            Bindings[inputId] = list;
+        }
+
+        var existing = list.FirstOrDefault(b => b.Activator == activator);
+        if (existing is not null) return existing;
+
+        var created = new InputBinding { Activator = activator };
+        list.Add(created);
+        return created;
+    }
+
+    /// <summary>First Regular action (display / stick / trigger compatibility).</summary>
     public OutputAction GetAction(string inputId)
     {
         if (MappingLocks.IsLockedGuideInput(inputId))
             return MappingLocks.LockedGuideAction;
 
-        if (InputMap.TryGetValue(inputId, out var action) && action is not null)
-            return action;
+        foreach (var binding in GetBindings(inputId))
+        {
+            if (binding.Activator != ActivatorType.Regular) continue;
+            foreach (var a in binding.Actions)
+            {
+                if (a.Kind != OutputActionKind.None)
+                    return a;
+            }
+        }
         return OutputAction.None();
     }
 
@@ -145,28 +212,82 @@ public sealed class ControllerProfile
         return a.Kind == OutputActionKind.Xbox ? a.Xbox : XboxOutput.None;
     }
 
+    /// <summary>Sets Regular binding to a single action (legacy / simple remap API).</summary>
     public void SetAction(string inputId, OutputAction action)
     {
         if (MappingLocks.IsLockedGuideInput(inputId))
         {
-            InputMap[MappingLocks.SteamInputId] = MappingLocks.LockedGuideAction;
+            Bindings[MappingLocks.SteamInputId] = [InputBinding.FromAction(MappingLocks.LockedGuideAction)];
             return;
         }
 
+        if (!Bindings.TryGetValue(inputId, out var list) || list is null)
+        {
+            list = [];
+            Bindings[inputId] = list;
+        }
+
+        list.RemoveAll(b => b.Activator == ActivatorType.Regular);
+        if (action.Kind != OutputActionKind.None)
+            list.Insert(0, InputBinding.FromAction(action));
+
+        PruneEmptyBindings(inputId);
+    }
+
+    /// <summary>Set one action slot (0 or 1) on an activator. Empty action removes that slot.</summary>
+    public void SetBindingAction(string inputId, ActivatorType activator, int slot, OutputAction action)
+    {
+        if (MappingLocks.IsLockedGuideInput(inputId))
+        {
+            Bindings[MappingLocks.SteamInputId] = [InputBinding.FromAction(MappingLocks.LockedGuideAction)];
+            return;
+        }
+
+        slot = Math.Clamp(slot, 0, 1);
+        var binding = GetOrCreateBinding(inputId, activator);
+
+        while (binding.Actions.Count <= slot)
+            binding.Actions.Add(OutputAction.None());
+
         if (action.Kind == OutputActionKind.None)
-            InputMap.Remove(inputId);
+        {
+            binding.Actions[slot] = OutputAction.None();
+            binding.Actions = binding.Actions.Where(a => a.Kind != OutputActionKind.None).ToList();
+        }
         else
-            InputMap[inputId] = action;
+        {
+            binding.Actions[slot] = action;
+            // Keep max 2
+            if (binding.Actions.Count > 2)
+                binding.Actions = binding.Actions.Take(2).ToList();
+        }
+
+        PruneEmptyBindings(inputId);
+    }
+
+    void PruneEmptyBindings(string inputId)
+    {
+        if (!Bindings.TryGetValue(inputId, out var list)) return;
+        list.RemoveAll(b => b.Actions.Count == 0 || b.Actions.All(a => a.Kind == OutputActionKind.None));
+        if (list.Count == 0)
+            Bindings.Remove(inputId);
     }
 
     /// <summary>Ensures Steam is always mapped to Xbox Guide in persisted profiles.</summary>
     public void EnsureLockedMappings()
     {
-        InputMap[MappingLocks.SteamInputId] = MappingLocks.LockedGuideAction;
+        Bindings[MappingLocks.SteamInputId] = [InputBinding.FromAction(MappingLocks.LockedGuideAction)];
     }
 
     public void SetButton(PhysicalInput input, XboxOutput output) =>
         SetAction(input.ToString(), OutputAction.FromXbox(output));
+
+    public string FormatBindingsDisplay(string inputId)
+    {
+        var list = GetBindings(inputId);
+        if (list.Count == 0) return "None";
+        return string.Join(" | ", list.Select(b => b.ToDisplayString()));
+    }
 }
 
 public sealed class ProfileStoreDocument

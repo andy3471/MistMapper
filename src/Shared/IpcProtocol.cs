@@ -41,6 +41,7 @@ public static class IpcCommands
     public const string DeleteProfile = "deleteProfile";
     public const string RemapButton = "remapButton";
     public const string RemapAction = "remapAction";
+    public const string SetBinding = "setBinding";
     public const string SetBridgeEnabled = "setBridgeEnabled";
     public const string SetAutoPauseWhenSteam = "setAutoPauseWhenSteam";
     public const string SetTrackpadMode = "setTrackpadMode";
@@ -70,6 +71,15 @@ public sealed class RemapActionPayload
 {
     public string ProfileId { get; set; } = "";
     public string InputId { get; set; } = "";
+    public OutputAction Action { get; set; } = OutputAction.None();
+}
+
+public sealed class SetBindingPayload
+{
+    public string ProfileId { get; set; } = "";
+    public string InputId { get; set; } = "";
+    public string Activator { get; set; } = "Regular";
+    public int Slot { get; set; }
     public OutputAction Action { get; set; } = OutputAction.None();
 }
 

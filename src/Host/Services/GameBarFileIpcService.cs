@@ -181,7 +181,7 @@ public sealed class GameBarFileIpcService : IDisposable
             {
                 // profileId \t inputId \t kind \t value [\t modifiers]
                 // kind: none|xbox|key|mouse
-                // value: Xbox name | VK int | Left/Right/Middle
+                // value: Xbox name | VK int | Left/Right/Middle/ScrollUp/ScrollDown
                 var bits = payload.Split('\t');
                 if (bits.Length < 3) throw new ArgumentException("Invalid remapAction payload");
                 if (bits[1].Equals("Steam", StringComparison.OrdinalIgnoreCase))
@@ -189,6 +189,25 @@ public sealed class GameBarFileIpcService : IDisposable
                 bits[0] = _bridge.ResolveRemapTargetProfileId(bits[0]);
                 var action = ParseAction(bits);
                 _profiles.RemapAction(bits[0], bits[1], action);
+                return null;
+            }
+
+            case "setBinding":
+            {
+                // profileId \t inputId \t activator \t slot \t kind \t value [\t modifiers]
+                var bits = payload.Split('\t');
+                if (bits.Length < 5) throw new ArgumentException("Invalid setBinding payload");
+                if (bits[1].Equals("Steam", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Steam/Guide is locked to Xbox Guide.");
+                if (!Enum.TryParse<ActivatorType>(bits[2], true, out var activator))
+                    throw new ArgumentException("Invalid activator");
+                if (!int.TryParse(bits[3], out var slot))
+                    throw new ArgumentException("Invalid slot");
+                bits[0] = _bridge.ResolveRemapTargetProfileId(bits[0]);
+                // Rebase ParseAction: kind at [4], value at [5], mods at [6]
+                var actionBits = new[] { bits[0], bits[1], bits.Length > 4 ? bits[4] : "none", bits.Length > 5 ? bits[5] : "", bits.Length > 6 ? bits[6] : "0" };
+                var action = ParseAction(actionBits);
+                _profiles.RemapBindingAction(bits[0], bits[1], activator, slot, action);
                 return null;
             }
 
@@ -531,9 +550,42 @@ public sealed class GameBarFileIpcService : IDisposable
             writer.WriteEndArray();
 
             writer.WriteStartObject("inputMap");
-            foreach (var (key, action) in active.InputMap)
-                writer.WriteString(key, action.ToDisplayString());
+            foreach (var key in active.Bindings.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))
+                writer.WriteString(key, active.FormatBindingsDisplay(key));
             writer.WriteEndObject();
+
+            writer.WriteStartObject("bindings");
+            foreach (var (key, list) in active.Bindings)
+            {
+                writer.WriteStartArray(key);
+                foreach (var b in list)
+                {
+                    writer.WriteStartObject();
+                    writer.WriteString("activator", b.Activator.ToString());
+                    writer.WriteStartArray("actions");
+                    foreach (var a in b.Actions)
+                    {
+                        writer.WriteStartObject();
+                        writer.WriteString("kind", a.Kind.ToString());
+                        writer.WriteString("display", a.ToDisplayString());
+                        if (a.Kind == OutputActionKind.Xbox) writer.WriteString("xbox", a.Xbox.ToString());
+                        if (a.Kind == OutputActionKind.Key)
+                        {
+                            writer.WriteNumber("virtualKey", a.VirtualKey);
+                            writer.WriteNumber("modifiers", (int)a.Modifiers);
+                        }
+                        if (a.Kind == OutputActionKind.MouseButton)
+                            writer.WriteString("mouseButton", a.MouseButton.ToString());
+                        writer.WriteEndObject();
+                    }
+                    writer.WriteEndArray();
+                    writer.WriteEndObject();
+                }
+                writer.WriteEndArray();
+            }
+            writer.WriteEndObject();
+
+            writer.WriteNumber("longPressMs", active.LongPressMs);
 
             writer.WriteStartArray("pressed");
             foreach (var id in status.PressedInputs)
@@ -554,7 +606,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 var remappable = spot.Remappable && !MappingLocks.IsLockedGuideInput(spot.InputId);
                 writer.WriteBoolean("remappable", remappable);
                 // Always serialize the *active profile* mapping (not Game Bar runtime override).
-                var mapped = active.GetAction(spot.InputId).ToDisplayString();
+                var mapped = active.FormatBindingsDisplay(spot.InputId);
                 writer.WriteString("mapped", mapped);
                 writer.WriteEndObject();
             }
@@ -566,7 +618,7 @@ public sealed class GameBarFileIpcService : IDisposable
             {
                 if (caps.Inputs.All(i => !i.Id.Equals(paddle, StringComparison.OrdinalIgnoreCase)))
                     continue;
-                writer.WriteString(paddle, active.GetAction(paddle).ToDisplayString());
+                writer.WriteString(paddle, active.FormatBindingsDisplay(paddle));
             }
             writer.WriteEndObject();
 
@@ -582,6 +634,7 @@ public sealed class GameBarFileIpcService : IDisposable
             writer.WriteNumber("smoothing", s.Smoothing);
             writer.WriteNumber("rotationDegrees", s.RotationDegrees);
             writer.WriteString("mouseHaptics", s.MouseHaptics.ToString());
+            writer.WriteNumber("flickSensitivity", s.FlickSensitivity);
             writer.WriteEndObject();
         }
 
