@@ -8,6 +8,7 @@ namespace MistMapper.Host;
 public sealed class TrayAppContext : ApplicationContext
 {
     readonly NotifyIcon _tray;
+    readonly Icon _appIcon;
     readonly ProfileService _profiles;
     readonly BridgeService _bridge;
     readonly IpcServer _ipc;
@@ -31,11 +32,12 @@ public sealed class TrayAppContext : ApplicationContext
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "MistMapper"));
 
+        _appIcon = AppIcon.Load();
         _tray = new NotifyIcon
         {
             Visible = true,
             Text = "MistMapper",
-            Icon = SystemIcons.Application,
+            Icon = _appIcon,
             ContextMenuStrip = BuildMenu()
         };
         _tray.DoubleClick += (_, _) => OpenRemapper();
@@ -114,7 +116,7 @@ public sealed class TrayAppContext : ApplicationContext
             _tray.Text = Truncate(tip, 63);
             _tray.Icon = status.State == Shared.BridgeRunState.Error
                 ? SystemIcons.Error
-                : SystemIcons.Application;
+                : _appIcon;
 
             if (_bridge.ConsumeViiperDownNotification())
             {
@@ -187,6 +189,7 @@ public sealed class TrayAppContext : ApplicationContext
             return;
         }
         _remapper = new RemapperForm(_profiles, _bridge);
+        _remapper.Icon = _appIcon;
         _remapper.FormClosed += (_, _) => _remapper = null;
         _remapper.Show();
     }
@@ -214,6 +217,7 @@ public sealed class TrayAppContext : ApplicationContext
             _steam.Dispose();
             _session.Dispose();
             _tray.Dispose();
+            _appIcon.Dispose();
         }
         base.Dispose(disposing);
     }
