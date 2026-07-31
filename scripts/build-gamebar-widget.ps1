@@ -160,8 +160,11 @@ Get-ChildItem $stage -Filter '*.cer' -File | Sort-Object LastWriteTime -Descendi
 if (-not (Get-ChildItem $stage -Filter '*.cer' -File -ErrorAction SilentlyContinue)) {
     Copy-Item $cerPath (Join-Path $stage 'MistMapper.GameBarWidget.cer') -Force
 }
-Copy-Item (Join-Path $widgetDir 'BundleArtifacts\Install-GameBarWidget.ps1') (Join-Path $stage 'Install-GameBarWidget.ps1') -Force
-Copy-Item (Join-Path $widgetDir 'BundleArtifacts\Install-GameBarWidget.cmd') (Join-Path $stage 'Install-GameBarWidget.cmd') -Force
+
+# Tracked sideload helpers (BundleArtifacts/ is gitignored build output).
+$sideloadSrc = Join-Path $repoRoot 'scripts\gamebar-sideload'
+Copy-Item (Join-Path $sideloadSrc 'Install-GameBarWidget.ps1') (Join-Path $stage 'Install-GameBarWidget.ps1') -Force
+Copy-Item (Join-Path $sideloadSrc 'Install-GameBarWidget.cmd') (Join-Path $stage 'Install-GameBarWidget.cmd') -Force
 
 Write-Host ''
 Write-Host "Staged installer at: $stage"
