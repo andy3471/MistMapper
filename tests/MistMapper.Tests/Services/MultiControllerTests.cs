@@ -167,10 +167,12 @@ public sealed class MultiControllerTests : IDisposable
     }
 
     [Fact]
-    public void Resolve_profile_prefers_slot_override()
+    public async Task Resolve_profile_prefers_slot_override()
     {
         var shared = _profiles.ActiveProfile;
         var unique = _profiles.SaveAsProfile(shared.Id, "Unique");
+        // SaveAsProfile activates the copy — restore shared so resolution must use the slot override.
+        _profiles.SetActiveProfile(shared.Id);
         _profiles.EnsureControllerSlot("pad-x", "X", "sc2");
         _profiles.SetControllerSlotProfile("pad-x", unique.Id);
 
@@ -178,6 +180,8 @@ public sealed class MultiControllerTests : IDisposable
         var session = new TestSessionState();
         var foreground = new TestForegroundState();
         var d0 = new FakeControllerDriver { DeviceKey = "pad-x" };
+        // A frame is required so the bridge publishes connected Controllers (same as other inject tests).
+        d0.Enqueue(new InputFrame());
 
         using var bridge = new BridgeService(
             _profiles,
@@ -188,10 +192,15 @@ public sealed class MultiControllerTests : IDisposable
             viiperHealth: new FakeViiperHealth(),
             viiperFactory: () => new FakeViiperClient());
 
-        bridge.SetSelectedController("pad-x");
-        // Force slot metadata into bridge via start sync briefly
         bridge.Start();
-        Thread.Sleep(400);
+        var connected = await WaitUntilAsync(
+            () => bridge.Status.Controllers.Any(c =>
+                c.DeviceKey.Equals("pad-x", StringComparison.OrdinalIgnoreCase)
+                && c.HasProfileOverride),
+            TimeSpan.FromSeconds(5));
+        connected.Should().BeTrue("injected pad with slot override should appear in bridge status");
+
+        bridge.SetSelectedController("pad-x");
         var resolved = bridge.GetSelectedResolvedProfile();
         resolved.Id.Should().Be(unique.Id);
         bridge.SelectedPadHasProfileOverride().Should().BeTrue();
