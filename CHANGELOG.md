@@ -2,11 +2,11 @@
 
 All notable changes to MistMapper are documented here.
 
-## [0.1.6] - 2026-08-01
+## [0.0.1] - 2026-08-01
 
 ### Added
 
-- Single SemVer source in `Directory.Build.props` (Host/Setup inherit; widget manifest `0.1.6.0`)
+- Single SemVer source in `Directory.Build.props` (Host/Setup inherit; widget manifest `0.0.1.0`)
 - Release checklist (`docs/release.md`) and `scripts/smoke-release.ps1`
 - Host file logging under `%AppData%\MistMapper\logs\`
 - Shared `HostCommandService` for remap/profile IPC
