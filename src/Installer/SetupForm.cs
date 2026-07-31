@@ -14,12 +14,17 @@ sealed class SetupForm : Form
     readonly TextBox _log = new();
     readonly Button _install = new();
     readonly Button _close = new();
+    readonly ExistingInstallInfo _existing;
+    readonly bool _isUpgrade;
     CancellationTokenSource? _cts;
     bool _busy;
 
     public SetupForm()
     {
-        Text = "MistMapper Setup";
+        _existing = InstallEngine.DetectExistingInstall();
+        _isUpgrade = _existing.IsUpgrade;
+
+        Text = _isUpgrade ? "MistMapper Update" : "MistMapper Setup";
         Width = 640;
         Height = 620;
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -35,7 +40,9 @@ sealed class SetupForm : Form
         _title.Location = new Point(28, 24);
         _title.ForeColor = Color.White;
 
-        _subtitle.Text = "Install the host, Game Bar widget, and dependencies.";
+        _subtitle.Text = _isUpgrade
+            ? "Update the host, Game Bar widget, and dependencies."
+            : "Install the host, Game Bar widget, and dependencies.";
         _subtitle.AutoSize = true;
         _subtitle.Location = new Point(30, 64);
         _subtitle.ForeColor = Color.FromArgb(170, 176, 190);
@@ -54,7 +61,7 @@ sealed class SetupForm : Form
 
         PlaceCheck(_chkHost, "MistMapper host (tray remapper)", true, optionsY);
         PlaceCheck(_chkWidget, "Game Bar widget (Win+G)", true, optionsY + 28);
-        PlaceCheck(_chkViiper, "VIIPER virtual Xbox pad (download)", true, optionsY + 56);
+        PlaceCheck(_chkViiper, "VIIPER virtual Xbox pad (download / upgrade)", true, optionsY + 56);
         PlaceCheck(_chkUsbip, "usbip-win2 driver (download + installer)", true, optionsY + 84);
         PlaceCheck(_chkStartup, "Start MistMapper with Windows", true, optionsY + 112);
         PlaceCheck(_chkLaunch, "Launch when finished", true, optionsY + 140);
@@ -75,7 +82,7 @@ sealed class SetupForm : Form
         _log.BorderStyle = BorderStyle.FixedSingle;
         _log.Font = new Font("Consolas", 9f);
 
-        _install.Text = "Install";
+        _install.Text = _isUpgrade ? "Update" : "Install";
         _install.Location = new Point(352, 530);
         _install.Width = 120;
         _install.Height = 36;
@@ -110,8 +117,12 @@ sealed class SetupForm : Form
         Controls.Add(_install);
         Controls.Add(_close);
 
-        AppendLog("Ready. Admin rights are used for the Game Bar widget and drivers.");
+        AppendLog(_isUpgrade
+            ? "Ready to update. Running MistMapper will be stopped while files are replaced."
+            : "Ready. Admin rights are used for the Game Bar widget and drivers.");
+        AppendLog(_existing.Summary);
         AppendLog("Install folder: " + InstallEngine.InstallRoot);
+        AppendLog("Target VIIPER: " + InstallEngine.TargetViiperVersion);
     }
 
     async Task InstallAsync()
@@ -152,7 +163,9 @@ sealed class SetupForm : Form
         {
             await engine.RunAsync(options, _cts.Token);
             AppendLog("");
-            AppendLog("Installation completed successfully.");
+            AppendLog(_isUpgrade
+                ? "Update completed successfully."
+                : "Installation completed successfully.");
             _close.Text = "Finish";
         }
         catch (OperationCanceledException)

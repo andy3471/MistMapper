@@ -43,7 +43,16 @@ if ($Stop) {
 
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 
-if (-not (Test-Path $exe)) {
+$marker = Join-Path $dest '.mistmapper-viiper-version'
+$installedTag = if (Test-Path $marker) { (Get-Content $marker -Raw).Trim() } else { '' }
+$needsDownload = -not (Test-Path $exe) -or ($installedTag -ne $Version)
+
+if ($needsDownload) {
+    if (Test-Path $exe) {
+        Write-Host "Upgrading VIIPER $installedTag → $Version ..."
+        Get-Process -Name "viiper" -ErrorAction SilentlyContinue | Stop-Process -Force
+        Start-Sleep -Milliseconds 500
+    }
     $zip = Join-Path $env:TEMP $asset
     Write-Host "Downloading $url ..."
     Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
@@ -56,7 +65,10 @@ if (-not (Test-Path $exe)) {
     throw "viiper.exe not found after extract under $dest"
 }
 
-Write-Host "VIIPER installed at: $exe"
+# Marker used by MistMapper-Setup to skip re-download when already on this tag.
+Set-Content -Path (Join-Path $dest '.mistmapper-viiper-version') -Value $Version -NoNewline
+
+Write-Host "VIIPER installed at: $exe ($Version)"
 Write-Host "License: GPL-3.0 - see licenses.txt in that folder and https://github.com/Alia5/VIIPER"
 
 if ($AddToUserPath) {

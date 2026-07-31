@@ -18,6 +18,33 @@ sealed class InstallOptions
     public bool LaunchWhenDone { get; set; } = true;
 }
 
+sealed class ExistingInstallInfo
+{
+    public bool HostPresent { get; init; }
+    public string? HostVersion { get; init; }
+    public bool WidgetPresent { get; init; }
+    public string? WidgetVersion { get; init; }
+    public bool ViiperPresent { get; init; }
+    public string? ViiperVersion { get; init; }
+    public bool IsUpgrade => HostPresent || WidgetPresent;
+
+    public string Summary
+    {
+        get
+        {
+            if (!IsUpgrade) return "No existing MistMapper install found.";
+            var parts = new List<string>();
+            if (HostPresent)
+                parts.Add("host " + (HostVersion ?? "?"));
+            if (WidgetPresent)
+                parts.Add("Game Bar " + (WidgetVersion ?? "?"));
+            if (ViiperPresent)
+                parts.Add("VIIPER " + (ViiperVersion ?? "present"));
+            return "Existing install: " + string.Join(", ", parts);
+        }
+    }
+}
+
 sealed class InstallEngine
 {
     public static string InstallRoot =>
@@ -27,7 +54,16 @@ sealed class InstallEngine
 
     public static string HostExePath => Path.Combine(InstallRoot, "Host", "MistMapper.exe");
 
-    const string ViiperVersion = "v0.7.0";
+    public static string ViiperDir =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VIIPER");
+
+    public static string ViiperExePath => Path.Combine(ViiperDir, "viiper.exe");
+
+    public static string ViiperVersionMarkerPath => Path.Combine(ViiperDir, ".mistmapper-viiper-version");
+
+    /// <summary>Pinned VIIPER release tag this setup ships / upgrades to.</summary>
+    public const string TargetViiperVersion = "v0.7.0";
+
     const string UsbipVersionTag = "v.0.9.7.8";
     const string UsbipAsset = "USBip-0.9.7.8-x64.exe";
 
@@ -40,6 +76,61 @@ sealed class InstallEngine
         _progress = progress;
     }
 
+    public static ExistingInstallInfo DetectExistingInstall()
+    {
+        var hostPresent = File.Exists(HostExePath);
+        string? hostVersion = null;
+        if (hostPresent)
+        {
+            try
+            {
+                var info = FileVersionInfo.GetVersionInfo(HostExePath);
+                hostVersion = info.ProductVersion ?? info.FileVersion;
+            }
+            catch { /* ignore */ }
+        }
+
+        string? widgetVersion = null;
+        var widgetPresent = false;
+        try
+        {
+            var pm = new PackageManager();
+            foreach (var pkg in pm.FindPackagesForUser(string.Empty))
+            {
+                if (!pkg.Id.Name.Equals("MistMapper.GameBar", StringComparison.OrdinalIgnoreCase)
+                    && !pkg.Id.Name.Equals("SteamControllerBridge.GameBar", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                widgetPresent = true;
+                var v = pkg.Id.Version;
+                widgetVersion = $"{v.Major}.{v.Minor}.{v.Build}.{v.Revision}";
+                break;
+            }
+        }
+        catch { /* ignore */ }
+
+        var viiperPresent = File.Exists(ViiperExePath);
+        string? viiperVersion = null;
+        if (viiperPresent)
+        {
+            try
+            {
+                if (File.Exists(ViiperVersionMarkerPath))
+                    viiperVersion = File.ReadAllText(ViiperVersionMarkerPath).Trim();
+            }
+            catch { /* ignore */ }
+        }
+
+        return new ExistingInstallInfo
+        {
+            HostPresent = hostPresent,
+            HostVersion = hostVersion,
+            WidgetPresent = widgetPresent,
+            WidgetVersion = widgetVersion,
+            ViiperPresent = viiperPresent,
+            ViiperVersion = viiperVersion
+        };
+    }
+
     public async Task RunAsync(InstallOptions options, CancellationToken ct)
     {
         var work = Path.Combine(Path.GetTempPath(), "MistMapper-Setup-" + Guid.NewGuid().ToString("N"));
@@ -49,6 +140,12 @@ sealed class InstallEngine
             _progress(2);
             _log("Preparing payload…");
             var payloadRoot = await PreparePayloadAsync(work, ct);
+
+            if (options.InstallHost || options.InstallViiper)
+            {
+                _progress(8);
+                StopConflictingProcesses(stopViiper: options.InstallViiper && NeedsViiperUpgrade());
+            }
 
             if (options.InstallHost)
             {
@@ -103,6 +200,57 @@ sealed class InstallEngine
         }
     }
 
+    void StopConflictingProcesses(bool stopViiper)
+    {
+        _log("Stopping running MistMapper processes…");
+        KillProcessesByName("MistMapper", "MistMapper.Widget");
+        if (stopViiper)
+        {
+            _log("Stopping VIIPER for upgrade…");
+            KillProcessesByName("viiper");
+        }
+
+        // Give file locks a moment to release before replacing binaries.
+        Thread.Sleep(750);
+    }
+
+    static void KillProcessesByName(params string[] names)
+    {
+        foreach (var name in names)
+        {
+            foreach (var p in Process.GetProcessesByName(name))
+            {
+                try
+                {
+                    p.Kill(entireProcessTree: true);
+                    p.WaitForExit(5000);
+                }
+                catch { /* ignore */ }
+                finally
+                {
+                    try { p.Dispose(); } catch { /* ignore */ }
+                }
+            }
+        }
+    }
+
+    static bool NeedsViiperUpgrade()
+    {
+        if (!File.Exists(ViiperExePath))
+            return true;
+        try
+        {
+            if (!File.Exists(ViiperVersionMarkerPath))
+                return true;
+            var installed = File.ReadAllText(ViiperVersionMarkerPath).Trim();
+            return !string.Equals(installed, TargetViiperVersion, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
     async Task<string> PreparePayloadAsync(string work, CancellationToken ct)
     {
         // Prefer adjacent payload.zip (dev / folder layout), then embedded resource.
@@ -141,11 +289,32 @@ sealed class InstallEngine
         var dest = Path.Combine(InstallRoot, "Host");
         _log("Installing host → " + dest);
         if (Directory.Exists(dest))
-            Directory.Delete(dest, recursive: true);
+            DeleteDirectoryWithRetry(dest);
         CopyDirectory(src, dest);
 
         if (!File.Exists(HostExePath))
             throw new InvalidOperationException("MistMapper.exe missing after copy.");
+    }
+
+    void DeleteDirectoryWithRetry(string path)
+    {
+        const int attempts = 6;
+        for (var i = 1; i <= attempts; i++)
+        {
+            try
+            {
+                Directory.Delete(path, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (i < attempts)
+            {
+                _log($"Host folder still locked (attempt {i}/{attempts}): {ex.Message}");
+                KillProcessesByName("MistMapper", "MistMapper.Widget");
+                Thread.Sleep(500 * i);
+            }
+        }
+
+        Directory.Delete(path, recursive: true);
     }
 
     async Task InstallGameBarWidgetAsync(string payloadRoot, CancellationToken ct)
@@ -241,31 +410,40 @@ sealed class InstallEngine
 
     async Task InstallViiperAsync(CancellationToken ct)
     {
-        var dest = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VIIPER");
-        var exe = Path.Combine(dest, "viiper.exe");
-        Directory.CreateDirectory(dest);
+        Directory.CreateDirectory(ViiperDir);
+        var needsUpgrade = NeedsViiperUpgrade();
 
-        if (!File.Exists(exe))
+        if (!needsUpgrade)
         {
-            var url = $"https://github.com/Alia5/VIIPER/releases/download/{ViiperVersion}/viiper-windows-amd64.zip";
-            _log("Downloading VIIPER (" + ViiperVersion + ")…");
-            var zip = Path.Combine(Path.GetTempPath(), "viiper-windows-amd64.zip");
-            await DownloadAsync(url, zip, ct);
-            _log("Extracting VIIPER…");
-            ZipFile.ExtractToDirectory(zip, dest, overwriteFiles: true);
-            try { File.Delete(zip); } catch { /* ignore */ }
+            _log("VIIPER already at " + TargetViiperVersion + ".");
+            AddUserPath(ViiperDir);
+            return;
+        }
+
+        if (File.Exists(ViiperExePath))
+        {
+            _log("Upgrading VIIPER → " + TargetViiperVersion + "…");
+            KillProcessesByName("viiper");
+            Thread.Sleep(500);
         }
         else
         {
-            _log("VIIPER already present.");
+            _log("Downloading VIIPER (" + TargetViiperVersion + ")…");
         }
 
-        if (!File.Exists(exe))
+        var url = $"https://github.com/Alia5/VIIPER/releases/download/{TargetViiperVersion}/viiper-windows-amd64.zip";
+        var zip = Path.Combine(Path.GetTempPath(), "viiper-windows-amd64.zip");
+        await DownloadAsync(url, zip, ct);
+        _log("Extracting VIIPER…");
+        ZipFile.ExtractToDirectory(zip, ViiperDir, overwriteFiles: true);
+        try { File.Delete(zip); } catch { /* ignore */ }
+
+        if (!File.Exists(ViiperExePath))
             throw new InvalidOperationException("viiper.exe not found after install.");
 
-        _log("VIIPER ready at " + exe + " (GPL-3.0 — https://github.com/Alia5/VIIPER)");
-        AddUserPath(dest);
+        await File.WriteAllTextAsync(ViiperVersionMarkerPath, TargetViiperVersion + Environment.NewLine, ct);
+        _log("VIIPER ready at " + ViiperExePath + " (" + TargetViiperVersion + ", GPL-3.0 — https://github.com/Alia5/VIIPER)");
+        AddUserPath(ViiperDir);
     }
 
     async Task InstallUsbipAsync(CancellationToken ct)
@@ -368,17 +546,14 @@ sealed class InstallEngine
     {
         if (startViiper)
         {
-            var viiper = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "VIIPER", "viiper.exe");
-            if (File.Exists(viiper) && !IsPortOpen(3242))
+            if (File.Exists(ViiperExePath) && !IsPortOpen(3242))
             {
                 _log("Starting VIIPER…");
                 var psi = new ProcessStartInfo
                 {
-                    FileName = viiper,
+                    FileName = ViiperExePath,
                     Arguments = "server --api.auto-attach-local-client=false",
-                    WorkingDirectory = Path.GetDirectoryName(viiper),
+                    WorkingDirectory = ViiperDir,
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     WindowStyle = ProcessWindowStyle.Hidden
