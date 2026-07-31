@@ -10,11 +10,8 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <RootNamespace>MistMapper.Installer</RootNamespace>
     <AssemblyName>MistMapper-Setup</AssemblyName>
-    <Version>0.1.5</Version>
     <ApplicationIcon>..\Host\Assets\MistMapper.ico</ApplicationIcon>
-    <Product>MistMapper</Product>
-    <Company>MistMapper</Company>
-    <Description>MistMapper setup — host, Game Bar widget, VIIPER, and startup</Description>
+    <Description>MistMapper setup - host, Game Bar widget, VIIPER, and startup</Description>
     <!-- Payload zip is optional at compile time; build-installer.ps1 embeds it. -->
     <DefineConstants Condition="Exists('Assets\payload.zip')">$(DefineConstants);HAS_PAYLOAD</DefineConstants>
   </PropertyGroup>

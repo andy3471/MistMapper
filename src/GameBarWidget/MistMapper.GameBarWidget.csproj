@@ -56,7 +56,12 @@
     <Compile Include="App.xaml.cs">
       <DependentUpon>App.xaml</DependentUpon>
     </Compile>
+    <Compile Include="HostStateDto.cs" />
     <Compile Include="IpcClient.cs" />
+    <Compile Include="WidgetPage.BindState.cs" />
+    <Compile Include="WidgetPage.Layouts.cs" />
+    <Compile Include="WidgetPage.Remap.cs" />
+    <Compile Include="WidgetPage.Settings.cs" />
     <Compile Include="MainPage.xaml.cs">
       <DependentUpon>MainPage.xaml</DependentUpon>
     </Compile>

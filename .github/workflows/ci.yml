@@ -28,9 +28,12 @@ jobs:
       - name: Test
         run: dotnet test MistMapper.sln -c Release --no-build --verbosity normal
 
+  # Full UWP + Setup build is expensive; skip on ordinary main pushes.
   build-installer:
-    # windows-2022 ships VS 2022 Enterprise with the Universal (UWP) workload.
-    # windows-latest may not expose the same MSBuild/UWP paths.
+    if: >
+      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-2022
     needs: build-and-test
     steps:
@@ -48,6 +51,11 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/build-installer.ps1
+
+      - name: Smoke-check release payload
+        shell: pwsh
+        run: |
+          ./scripts/smoke-release.ps1 -RequireSetup
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4

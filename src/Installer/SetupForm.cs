@@ -24,82 +24,117 @@ sealed class SetupForm : Form
         _existing = InstallEngine.DetectExistingInstall();
         _isUpgrade = _existing.IsUpgrade;
 
+        AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScaleDimensions = new SizeF(96f, 96f);
         Text = _isUpgrade ? "MistMapper Update" : "MistMapper Setup";
-        Width = 640;
-        Height = 620;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = false;
+        FormBorderStyle = FormBorderStyle.Sizable;
+        MinimizeBox = false;
+        MaximizeBox = true;
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(18, 20, 26);
         ForeColor = Color.FromArgb(240, 242, 248);
         Font = new Font("Segoe UI", 10f);
+        MinimumSize = new Size(520, 480);
+
+        // Cap initial size to the working area so 200–300% scaling still fits.
+        var work = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1280, 720);
+        var targetW = Math.Min(720, Math.Max(520, work.Width - 80));
+        var targetH = Math.Min(700, Math.Max(480, work.Height - 80));
+        ClientSize = new Size(targetW, targetH);
+
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 5,
+            Padding = new Padding(24, 20, 24, 16),
+            BackColor = BackColor
+        };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // title
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // options
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // progress
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f)); // log
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // buttons
 
         _title.Text = "MistMapper";
         _title.Font = new Font("Segoe UI Semibold", 22f);
         _title.AutoSize = true;
-        _title.Location = new Point(28, 24);
         _title.ForeColor = Color.White;
+        _title.Margin = new Padding(0, 0, 0, 4);
 
         _subtitle.Text = _isUpgrade
             ? "Update the host, Game Bar widget, and dependencies."
             : "Install the host, Game Bar widget, and dependencies.";
         _subtitle.AutoSize = true;
-        _subtitle.Location = new Point(30, 64);
+        _subtitle.MaximumSize = new Size(10000, 0);
         _subtitle.ForeColor = Color.FromArgb(170, 176, 190);
+        _subtitle.Margin = new Padding(0, 0, 0, 12);
 
-        var optionsY = 100;
-        void PlaceCheck(CheckBox box, string text, bool on, int y)
+        var header = new FlowLayoutPanel
         {
-            box.Text = text;
-            box.Checked = on;
-            box.AutoSize = true;
-            box.Location = new Point(32, y);
-            box.ForeColor = Color.FromArgb(230, 234, 242);
-            box.FlatStyle = FlatStyle.Flat;
-            Controls.Add(box);
-        }
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Margin = new Padding(0)
+        };
+        header.Controls.Add(_title);
+        header.Controls.Add(_subtitle);
+        root.Controls.Add(header, 0, 0);
 
-        PlaceCheck(_chkHost, "MistMapper host (tray remapper)", true, optionsY);
-        PlaceCheck(_chkWidget, "Game Bar widget (Win+G)", true, optionsY + 28);
-        PlaceCheck(_chkViiper, "VIIPER virtual Xbox pad (download / upgrade)", true, optionsY + 56);
-        PlaceCheck(_chkUsbip, "usbip-win2 driver (download + installer)", true, optionsY + 84);
-        PlaceCheck(_chkStartup, "Start MistMapper with Windows", true, optionsY + 112);
-        PlaceCheck(_chkLaunch, "Launch when finished", true, optionsY + 140);
+        var options = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Margin = new Padding(0, 0, 0, 12)
+        };
+        StyleCheck(_chkHost, "MistMapper host (tray remapper)", true);
+        StyleCheck(_chkWidget, "Game Bar widget (Win+G)", true);
+        StyleCheck(_chkViiper, "VIIPER virtual Xbox pad (download / upgrade)", true);
+        StyleCheck(_chkUsbip, "usbip-win2 driver (download + installer)", true);
+        StyleCheck(_chkStartup, "Start MistMapper with Windows", true);
+        StyleCheck(_chkLaunch, "Launch when finished", true);
+        options.Controls.Add(_chkHost);
+        options.Controls.Add(_chkWidget);
+        options.Controls.Add(_chkViiper);
+        options.Controls.Add(_chkUsbip);
+        options.Controls.Add(_chkStartup);
+        options.Controls.Add(_chkLaunch);
+        root.Controls.Add(options, 0, 1);
 
-        _progress.Location = new Point(32, 280);
-        _progress.Width = 560;
+        _progress.Dock = DockStyle.Top;
         _progress.Height = 18;
+        _progress.Margin = new Padding(0, 0, 0, 10);
         _progress.Style = ProgressBarStyle.Continuous;
+        root.Controls.Add(_progress, 0, 2);
 
         _log.Multiline = true;
         _log.ReadOnly = true;
         _log.ScrollBars = ScrollBars.Vertical;
-        _log.Location = new Point(32, 310);
-        _log.Width = 560;
-        _log.Height = 200;
+        _log.Dock = DockStyle.Fill;
         _log.BackColor = Color.FromArgb(28, 31, 40);
         _log.ForeColor = Color.FromArgb(200, 206, 220);
         _log.BorderStyle = BorderStyle.FixedSingle;
         _log.Font = new Font("Consolas", 9f);
+        _log.Margin = new Padding(0, 0, 0, 12);
+        root.Controls.Add(_log, 0, 3);
 
-        _install.Text = _isUpgrade ? "Update" : "Install";
-        _install.Location = new Point(352, 530);
-        _install.Width = 120;
-        _install.Height = 36;
-        _install.FlatStyle = FlatStyle.Flat;
-        _install.BackColor = Color.FromArgb(70, 130, 240);
-        _install.ForeColor = Color.White;
-        _install.FlatAppearance.BorderSize = 0;
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false,
+            Margin = new Padding(0)
+        };
+
+        StylePrimaryButton(_install, _isUpgrade ? "Update" : "Install");
         _install.Click += async (_, _) => await InstallAsync();
 
-        _close.Text = "Close";
-        _close.Location = new Point(480, 530);
-        _close.Width = 112;
-        _close.Height = 36;
-        _close.FlatStyle = FlatStyle.Flat;
-        _close.BackColor = Color.FromArgb(45, 50, 62);
-        _close.ForeColor = Color.White;
-        _close.FlatAppearance.BorderSize = 0;
+        StyleSecondaryButton(_close, "Close");
         _close.Click += (_, _) =>
         {
             if (_busy)
@@ -110,12 +145,18 @@ sealed class SetupForm : Form
             Close();
         };
 
-        Controls.Add(_title);
-        Controls.Add(_subtitle);
-        Controls.Add(_progress);
-        Controls.Add(_log);
-        Controls.Add(_install);
-        Controls.Add(_close);
+        // RightToLeft: add Close first so Install appears to its left.
+        buttons.Controls.Add(_close);
+        buttons.Controls.Add(_install);
+        root.Controls.Add(buttons, 0, 4);
+
+        Controls.Add(root);
+        Resize += (_, _) =>
+        {
+            // Keep subtitle wrapping within the client width.
+            _subtitle.MaximumSize = new Size(Math.Max(200, ClientSize.Width - 64), 0);
+        };
+        _subtitle.MaximumSize = new Size(Math.Max(200, ClientSize.Width - 64), 0);
 
         AppendLog(_isUpgrade
             ? "Ready to update. Running MistMapper will be stopped while files are replaced."
@@ -123,6 +164,42 @@ sealed class SetupForm : Form
         AppendLog(_existing.Summary);
         AppendLog("Install folder: " + InstallEngine.InstallRoot);
         AppendLog("Target VIIPER: " + InstallEngine.TargetViiperVersion);
+    }
+
+    static void StyleCheck(CheckBox box, string text, bool on)
+    {
+        box.Text = text;
+        box.Checked = on;
+        box.AutoSize = true;
+        box.ForeColor = Color.FromArgb(230, 234, 242);
+        box.FlatStyle = FlatStyle.Flat;
+        box.Margin = new Padding(0, 0, 0, 6);
+    }
+
+    static void StylePrimaryButton(Button btn, string text)
+    {
+        btn.Text = text;
+        btn.AutoSize = true;
+        btn.MinimumSize = new Size(120, 36);
+        btn.Padding = new Padding(16, 6, 16, 6);
+        btn.Margin = new Padding(8, 0, 0, 0);
+        btn.FlatStyle = FlatStyle.Flat;
+        btn.BackColor = Color.FromArgb(70, 130, 240);
+        btn.ForeColor = Color.White;
+        btn.FlatAppearance.BorderSize = 0;
+    }
+
+    static void StyleSecondaryButton(Button btn, string text)
+    {
+        btn.Text = text;
+        btn.AutoSize = true;
+        btn.MinimumSize = new Size(112, 36);
+        btn.Padding = new Padding(16, 6, 16, 6);
+        btn.Margin = new Padding(0);
+        btn.FlatStyle = FlatStyle.Flat;
+        btn.BackColor = Color.FromArgb(45, 50, 62);
+        btn.ForeColor = Color.White;
+        btn.FlatAppearance.BorderSize = 0;
     }
 
     async Task InstallAsync()

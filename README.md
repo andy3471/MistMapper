@@ -114,29 +114,39 @@ and run it. That installs the host, Game Bar widget, and can pull in VIIPER / us
 
 Then Win+G, pin MistMapper, edit a layout, play.
 
-For Xbox mode / FSE: enable Start with Windows in the installer (or tray), and set MistMapper to Start at log in. More detail in [docs/setup.md](docs/setup.md).
+Profiles are stored in `%AppData%\MistMapper\profiles.json` and survive app upgrades.
+
+For Xbox mode / FSE: enable Start with Windows in the installer (or tray), and set MistMapper to **Start at log in** (the supported path). More detail in [docs/setup.md](docs/setup.md). Release cutting: [docs/release.md](docs/release.md).
 
 ### Prerequisites (manual install)
 
 Windows 10/11 x64, a supported controller, [usbip-win2](https://github.com/vadimgrn/usbip-win2), and [VIIPER](https://github.com/Alia5/VIIPER) (GPL-3.0, not shipped in this repo). See [docs/setup.md](docs/setup.md).
 
+### Known limits
+
+- Not full Steam Input parity (no chords / action layers / every activator type yet).
+- Game Bar widget is **self-signed sideload**, not Microsoft Store signed.
+- Keyboard `SendInput` may miss elevated games unless MistMapper runs elevated; prefer Xbox binds for games.
+- Keep Steam closed, or leave **Pause when Steam is open** on (default) so Steam Input can take the pad.
+- Virtual pad appears after sign-in; it cannot drive cold-boot gamepad PIN at the lock screen.
+
+## Supported / not supported
+
+**Supported:** SC1, SC2, DualSense / DualSense Edge; Game Pass and Xbox FSE with a virtual Xbox pad; Game Bar remapping; per-game layouts; multi-pad.
+
+**Not supported (yet):** full Steam Input parity (chords, action layers, every activator); Microsoft Store packaging; cold-boot gamepad PIN with the virtual pad.
+
 ## Develop from source
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build/test norms. Short version:
+
 ```powershell
-# VIIPER (if not already installed)
-powershell -ExecutionPolicy Bypass -File .\scripts\install-viiper.ps1 -Start -AddToUserPath
-
-# Host
-dotnet publish src\Host\MistMapper.Host.csproj -c Release -o publish\Host
-.\publish\Host\MistMapper.exe --tray
-
-# Game Bar widget (needs VS UWP workload + Windows SDK)
-powershell -ExecutionPolicy Bypass -File .\scripts\build-gamebar-widget.ps1
-.\publish\GameBarWidget\Install-GameBarWidget.cmd   # elevated
-
-# Or build the full setup package
+dotnet test MistMapper.sln -c Release
 powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke-release.ps1 -RequireSetup
 ```
+
+Also: [docs/setup.md](docs/setup.md), [docs/architecture.md](docs/architecture.md), [docs/release.md](docs/release.md).
 
 ## Status
 
@@ -147,6 +157,8 @@ It turned out well enough that I want to grow it into a properly maintained app:
 ## License
 
 [PolyForm Noncommercial 1.0.0](LICENSE.md). Free to use and modify for personal / noncommercial purposes. Commercial use (including selling MistMapper) needs a separate license.
+
+This is **source-available** (not OSI “open source”): the source is public, but the license forbids commercial use without permission.
 
 Protocol details informed by community Steam Controller HID research (e.g. SteamlessController).
 

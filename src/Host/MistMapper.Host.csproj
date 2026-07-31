@@ -10,7 +10,6 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <RootNamespace>MistMapper.Host</RootNamespace>
     <AssemblyName>MistMapper</AssemblyName>
-    <Version>0.1.0</Version>
     <ApplicationIcon>Assets\MistMapper.ico</ApplicationIcon>
   </PropertyGroup>
 

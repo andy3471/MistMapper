@@ -6,46 +6,24 @@ namespace MistMapper.Host.Mapping;
 
 public sealed class MappingEngine
 {
-    /// <summary>Pixels of cursor travel for a full-pad finger swipe (normalized Δ≈2).</summary>
-    const float TrackpadMouseSensitivity = 900f;
-
-    /// <summary>Pad Δ≈0.2 at gain 5 → full stick tip (Steam-like mouse→stick).</summary>
-    const float MouseJoystickPadGain = 5f;
-
-    /// <summary>How strongly normalized gyro rates push the virtual stick tip.</summary>
-    const float MouseJoystickGyroGain = 2.2f;
-
     /// <summary>Exponential return-to-center rate (per second) when motion stops.</summary>
     const float MouseJoystickFrictionPerSec = 10f;
 
     readonly IKeyboardSink _keyboard;
     readonly IMouseSink _mouse;
+    readonly TrackpadSurfaceProcessor _trackpad = new();
+    readonly GyroProcessor _gyro = new();
     double _mouseAccumX;
     double _mouseAccumY;
     float _mouseJoyX;
     float _mouseJoyY;
     long _mouseJoyLastTick;
-    readonly Dictionary<string, (float X, float Y)> _padMouseLast = new(StringComparer.OrdinalIgnoreCase);
-    readonly Dictionary<string, (float Vx, float Vy)> _padTrackballVel = new(StringComparer.OrdinalIgnoreCase);
-    readonly Dictionary<string, (float X, float Y)> _padSmooth = new(StringComparer.OrdinalIgnoreCase);
-    readonly Dictionary<string, float> _mouseHapticAccum = new(StringComparer.OrdinalIgnoreCase);
-    readonly Queue<(bool RightPad, byte Intensity)> _mouseHapticTicks = new();
+    double _wheelAccum;
     readonly HashSet<string> _heldKeys = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> _heldMouse = new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string, long> _pressStarted = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> _longFired = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> _prevDigitalPressed = new(StringComparer.OrdinalIgnoreCase);
-    readonly Dictionary<string, FlickPadState> _flickPads = new(StringComparer.OrdinalIgnoreCase);
-    double _wheelAccum;
-    bool _gyroToggleOn;
-    bool _gyroTogglePrevPressed;
-
-    sealed class FlickPadState
-    {
-        public float LastAngle;
-        public float AccumYaw;
-        public bool HasAngle;
-    }
 
     public MappingEngine(IKeyboardSink? keyboard = null, IMouseSink? mouse = null)
     {
@@ -122,16 +100,16 @@ public sealed class MappingEngine
             ApplyStick(profile.GetAction("RightStick"), sx, sy, ref outState);
         }
 
-        ApplyTrackpad(profile.LeftTrackpad, frame.GetDigital("LeftTrackpad"), frame, "LeftTrackpad",
-            profile.LeftTrackpadSettings, ref outState, ref buttons, profile);
-        ApplyTrackpad(profile.RightTrackpad, frame.GetDigital("RightTrackpad"), frame, "RightTrackpad",
-            profile.RightTrackpadSettings, ref outState, ref buttons, profile);
-        TickTrackballCoast(profile);
+        _trackpad.ApplyTrackpad(profile.LeftTrackpad, frame.GetDigital("LeftTrackpad"), frame, "LeftTrackpad",
+            profile.LeftTrackpadSettings, profile, ref outState, ref buttons, AddMouseJoystick, AddMouseDelta);
+        _trackpad.ApplyTrackpad(profile.RightTrackpad, frame.GetDigital("RightTrackpad"), frame, "RightTrackpad",
+            profile.RightTrackpadSettings, profile, ref outState, ref buttons, AddMouseJoystick, AddMouseDelta);
+        _trackpad.TickTrackballCoast(profile, _mouseJoyLastTick, AddMouseDelta);
 
         if (profile.Gyro != GyroMode.Off
-            && IsGyroActive(profile, frame)
+            && _gyro.IsActive(profile, frame)
             && frame.TryGetVector("Gyro", out var gx, out var gy))
-            ApplyGyro(profile, gx, gy, ref outState);
+            GyroProcessor.Apply(profile, gx, gy, ref outState, AddMouseDelta, AddMouseJoystick);
 
         if (mouseJoyActive)
             WriteMouseJoystick(ref outState);
@@ -152,6 +130,12 @@ public sealed class MappingEngine
         return outState;
     }
 
+    void AddMouseDelta(double dx, double dy)
+    {
+        _mouseAccumX += dx;
+        _mouseAccumY += dy;
+    }
+
     static bool UsesMouseJoystick(ControllerProfile profile) =>
         profile.LeftTrackpad == TrackpadMode.AsMouseJoystick
         || profile.RightTrackpad == TrackpadMode.AsMouseJoystick
@@ -165,7 +149,7 @@ public sealed class MappingEngine
             float dt = (float)(now - _mouseJoyLastTick) / Stopwatch.Frequency;
             if (dt > 0f && dt < 0.25f)
             {
-                float friction = MouseJoystickReturnFriction(profile, frame);
+                float friction = TrackpadSurfaceProcessor.GetMouseJoystickReturnFriction(profile, frame, MouseJoystickFrictionPerSec);
                 float decay = MathF.Exp(-friction * dt);
                 _mouseJoyX *= decay;
                 _mouseJoyY *= decay;
@@ -177,31 +161,6 @@ public sealed class MappingEngine
         if (Math.Abs(_mouseJoyY) < 0.01f) _mouseJoyY = 0f;
     }
 
-    /// <summary>
-    /// Mouse-joystick "trackball" = slower return-to-center after a flick, not a
-    /// per-frame impulse loop (that pegs the stick and spins the camera).
-    /// </summary>
-    static float MouseJoystickReturnFriction(ControllerProfile profile, InputFrame frame)
-    {
-        static float FromPad(TrackpadMode mode, TrackpadSurfaceSettings? settings, bool touching)
-        {
-            if (mode != TrackpadMode.AsMouseJoystick || settings is not { TrackballMode: true })
-                return -1f;
-            // While still touching, keep a snappier return so resting on the pad centers.
-            if (touching)
-                return Math.Max(MouseJoystickFrictionPerSec, MouseJoystickTrackballReturnPerSec(settings.TrackballFriction));
-            return MouseJoystickTrackballReturnPerSec(settings.TrackballFriction);
-        }
-
-        float left = FromPad(profile.LeftTrackpad, profile.LeftTrackpadSettings, frame.GetDigital("LeftTrackpad"));
-        float right = FromPad(profile.RightTrackpad, profile.RightTrackpadSettings, frame.GetDigital("RightTrackpad"));
-        if (left < 0 && right < 0)
-            return MouseJoystickFrictionPerSec;
-        if (left < 0) return right;
-        if (right < 0) return left;
-        return Math.Min(left, right);
-    }
-
     void AddMouseJoystick(float dx, float dy)
     {
         _mouseJoyX = Math.Clamp(_mouseJoyX + dx, -1f, 1f);
@@ -210,8 +169,8 @@ public sealed class MappingEngine
 
     void WriteMouseJoystick(ref Xbox360InputState state)
     {
-        short x = ClampToShort(_mouseJoyX * 32767f);
-        short y = ClampToShort(_mouseJoyY * 32767f);
+        short x = MappingMath.ClampToShort(_mouseJoyX * 32767f);
+        short y = MappingMath.ClampToShort(_mouseJoyY * 32767f);
         state.ThumbRX = (short)Math.Clamp(state.ThumbRX + x, short.MinValue, short.MaxValue);
         state.ThumbRY = (short)Math.Clamp(state.ThumbRY + y, short.MinValue, short.MaxValue);
     }
@@ -373,438 +332,9 @@ public sealed class MappingEngine
         }
     }
 
-    void ApplyTrackpad(TrackpadMode mode, bool touching, InputFrame frame, string id,
-        TrackpadSurfaceSettings? surface, ref Xbox360InputState state, ref uint buttons, ControllerProfile profile)
-    {
-        surface ??= new TrackpadSurfaceSettings();
-        if (mode == TrackpadMode.Off) return;
-
-        if (!touching)
-        {
-            if (mode == TrackpadMode.FlickStick)
-                FinishFlick(id, surface);
-            _padMouseLast.Remove(id);
-            _padSmooth.Remove(id);
-            ClearMouseHapticState(id);
-            // Trackball impulse coast is OS-mouse only.
-            if (!surface.TrackballMode || mode != TrackpadMode.AsMouse)
-                _padTrackballVel.Remove(id);
-            return;
-        }
-
-        if (!frame.TryGetVector(id, out var nx, out var ny)) return;
-
-        float sensX = profile.TrackpadSensitivityX;
-        float sensY = profile.TrackpadSensitivityY;
-        bool invX = profile.InvertTrackpadX;
-        bool invY = profile.InvertTrackpadY;
-        float dz = profile.TrackpadDeadzone;
-
-        float ax = Math.Abs(nx) < dz ? 0 : nx;
-        float ay = Math.Abs(ny) < dz ? 0 : ny;
-        (ax, ay) = Rotate2D(ax, ay, surface.RotationDegrees);
-        ax *= sensX * (invX ? -1 : 1);
-        ay *= sensY * (invY ? -1 : 1);
-
-        short x = ClampToShort(ax * 32767f);
-        short y = ClampToShort(ay * 32767f);
-
-        switch (mode)
-        {
-            case TrackpadMode.AsLeftStick:
-                state.ThumbLX = x;
-                state.ThumbLY = y;
-                break;
-            case TrackpadMode.AsRightStick:
-                state.ThumbRX = x;
-                state.ThumbRY = y;
-                break;
-            case TrackpadMode.AsDpad:
-                const short thresh = 12000;
-                if (y > thresh) buttons |= (uint)Xbox360Buttons.DpadUp;
-                if (y < -thresh) buttons |= (uint)Xbox360Buttons.DpadDown;
-                if (x < -thresh) buttons |= (uint)Xbox360Buttons.DpadLeft;
-                if (x > thresh) buttons |= (uint)Xbox360Buttons.DpadRight;
-                break;
-            case TrackpadMode.AsMouse:
-                ApplyRelativePadMouse(id, nx, ny, surface, sensX, sensY, invX, invY, mouseJoystick: false);
-                break;
-            case TrackpadMode.AsMouseJoystick:
-                ApplyRelativePadMouse(id, nx, ny, surface, sensX, sensY, invX, invY, mouseJoystick: true);
-                break;
-            case TrackpadMode.FlickStick:
-                UpdateFlick(id, ax, ay, surface);
-                break;
-            case TrackpadMode.ScrollWheel:
-                if (!_padMouseLast.TryGetValue(id, out var scrollLast))
-                {
-                    _padMouseLast[id] = (nx, ny);
-                    break;
-                }
-                _padMouseLast[id] = (nx, ny);
-                float scrollDy = -(ny - scrollLast.Y) * sensY * (invY ? -1 : 1);
-                // Pad Δ of ~0.1 ≈ one notch.
-                _wheelAccum += scrollDy * 1200f;
-                break;
-            case TrackpadMode.ButtonPad:
-                const short bpThresh = 10000;
-                if (y > bpThresh) buttons |= (uint)Xbox360Buttons.A;
-                if (y < -bpThresh) buttons |= (uint)Xbox360Buttons.Y;
-                if (x < -bpThresh) buttons |= (uint)Xbox360Buttons.X;
-                if (x > bpThresh) buttons |= (uint)Xbox360Buttons.B;
-                break;
-        }
-    }
-
-    void ApplyRelativePadMouse(string id, float nx, float ny, TrackpadSurfaceSettings surface,
-        float sensX, float sensY, bool invX, bool invY, bool mouseJoystick)
-    {
-        if (!_padMouseLast.TryGetValue(id, out var last))
-        {
-            _padMouseLast[id] = (nx, ny);
-            return;
-        }
-        _padMouseLast[id] = (nx, ny);
-
-        float dx = nx - last.X;
-        float dy = ny - last.Y;
-        (dx, dy) = Rotate2D(dx, dy, surface.RotationDegrees);
-        // Haptics track raw finger travel so swipe speed maps to tick density.
-        float hapticDx = dx;
-        float hapticDy = dy;
-        dx = SmoothAxis(id, "x", dx, surface.Smoothing);
-        dy = SmoothAxis(id, "y", dy, surface.Smoothing);
-
-        float outX = dx * (mouseJoystick ? MouseJoystickPadGain : TrackpadMouseSensitivity) * sensX * (invX ? -1 : 1);
-        float outY = dy * (mouseJoystick ? MouseJoystickPadGain : TrackpadMouseSensitivity) * sensY * (invY ? -1 : 1);
-
-        // Impulse coast is only for OS mouse. Mouse-joystick trackball is return-rate only
-        // (see MouseJoystickReturnFriction) — re-adding flick deltas each coast frame pegs the stick.
-        if (surface.TrackballMode && !mouseJoystick)
-            UpdateTrackballVelocity(id, outX, outY);
-
-        if (mouseJoystick)
-            AddMouseJoystick(outX, outY);
-        else
-        {
-            _mouseAccumX += outX;
-            _mouseAccumY += -outY;
-        }
-
-        ConsiderMouseHaptic(id, hapticDx, hapticDy, surface.MouseHaptics);
-    }
-
-    void ClearMouseHapticState(string padId)
-    {
-        _mouseHapticAccum.Remove(padId);
-        if (_mouseHapticTicks.Count == 0) return;
-
-        bool right = padId.Contains("Right", StringComparison.OrdinalIgnoreCase);
-        var kept = new Queue<(bool RightPad, byte Intensity)>();
-        while (_mouseHapticTicks.Count > 0)
-        {
-            var tick = _mouseHapticTicks.Dequeue();
-            if (tick.RightPad != right)
-                kept.Enqueue(tick);
-        }
-        while (kept.Count > 0)
-            _mouseHapticTicks.Enqueue(kept.Dequeue());
-    }
-
-    void ConsiderMouseHaptic(string padId, float dx, float dy, MouseHapticsIntensity intensity)
-    {
-        if (intensity == MouseHapticsIntensity.Off) return;
-
-        float dist = MathF.Sqrt(dx * dx + dy * dy);
-        // Pad noise while holding still will otherwise drip into spacing and keep ticking.
-        const float idleEpsilon = 0.0025f;
-        if (dist < idleEpsilon)
-        {
-            _mouseHapticAccum.Remove(padId);
-            return;
-        }
-
-        // Distance-per-tick: faster swipes cross spacing more often → denser clicks.
-        float spacing = intensity switch
-        {
-            MouseHapticsIntensity.Low => 0.055f,
-            MouseHapticsIntensity.High => 0.014f,
-            _ => 0.028f
-        };
-
-        _mouseHapticAccum.TryGetValue(padId, out float accum);
-        accum += dist;
-
-        byte level = intensity switch
-        {
-            MouseHapticsIntensity.Low => 80,
-            MouseHapticsIntensity.High => 200,
-            _ => 140
-        };
-        bool right = padId.Contains("Right", StringComparison.OrdinalIgnoreCase);
-
-        // Cap per frame so one HID burst doesn't become a buzz train; leftover
-        // distance carries to the next report so continuous motion stays dense.
-        int ticks = 0;
-        while (accum >= spacing && ticks < 3)
-        {
-            accum -= spacing;
-            _mouseHapticTicks.Enqueue((right, level));
-            ticks++;
-        }
-
-        _mouseHapticAccum[padId] = accum;
-    }
-
     /// <summary>Drain one pending Steam-style mouse haptic tick (if any).</summary>
-    public bool TryConsumeMouseHaptic(out bool rightPad, out byte intensity)
-    {
-        if (_mouseHapticTicks.Count == 0)
-        {
-            rightPad = false;
-            intensity = 0;
-            return false;
-        }
-
-        (rightPad, intensity) = _mouseHapticTicks.Dequeue();
-        return true;
-    }
-
-    /// <summary>
-    /// Trackball coast must use flick momentum, not the final lift sample.
-    /// Pads often jump toward (0,0) on release, which would reverse coast direction.
-    /// </summary>
-    void UpdateTrackballVelocity(string id, float outX, float outY)
-    {
-        const float minSample = 0.0008f;
-        float mag = MathF.Sqrt(outX * outX + outY * outY);
-        if (mag < minSample)
-        {
-            // Finger nearly still — bleed velocity so a pause before lift doesn't coast.
-            if (_padTrackballVel.TryGetValue(id, out var idle))
-            {
-                idle.Vx *= 0.85f;
-                idle.Vy *= 0.85f;
-                if (Math.Abs(idle.Vx) < 0.002f && Math.Abs(idle.Vy) < 0.002f)
-                    _padTrackballVel.Remove(id);
-                else
-                    _padTrackballVel[id] = idle;
-            }
-            return;
-        }
-
-        if (!_padTrackballVel.TryGetValue(id, out var prev))
-        {
-            _padTrackballVel[id] = (outX, outY);
-            return;
-        }
-
-        float prevMag = MathF.Sqrt(prev.Vx * prev.Vx + prev.Vy * prev.Vy);
-        if (prevMag > minSample)
-        {
-            float dot = (prev.Vx * outX + prev.Vy * outY) / (prevMag * mag);
-            // Release spike: large sample opposite the flick — keep prior momentum.
-            if (dot < -0.2f && mag > prevMag * 0.35f)
-                return;
-        }
-
-        // EMA so one noisy frame can't own coast direction.
-        const float alpha = 0.45f;
-        _padTrackballVel[id] = (
-            prev.Vx * (1f - alpha) + outX * alpha,
-            prev.Vy * (1f - alpha) + outY * alpha);
-    }
-
-    float SmoothAxis(string id, string axis, float sample, float smoothing)
-    {
-        // Steam-style: higher smoothing → heavier EMA. 0 = pass-through.
-        float t = Math.Clamp(smoothing, 0f, 100f) / 100f;
-        if (t <= 0.001f) return sample;
-        string key = id + ":" + axis;
-        float alpha = 1f - t * 0.85f;
-        if (!_padSmooth.TryGetValue(key, out var prev))
-        {
-            _padSmooth[key] = (sample, sample);
-            return sample;
-        }
-        float filtered = prev.X + (sample - prev.X) * alpha;
-        _padSmooth[key] = (filtered, filtered);
-        return filtered;
-    }
-
-    void TickTrackballCoast(ControllerProfile profile)
-    {
-        foreach (var id in _padTrackballVel.Keys.ToList())
-        {
-            // Still touching — velocity was refreshed this frame; don't coast yet.
-            if (_padMouseLast.ContainsKey(id))
-                continue;
-
-            var surface = id.Equals("LeftTrackpad", StringComparison.OrdinalIgnoreCase)
-                ? profile.LeftTrackpadSettings
-                : profile.RightTrackpadSettings;
-            if (surface is null || !surface.TrackballMode)
-            {
-                _padTrackballVel.Remove(id);
-                continue;
-            }
-
-            var mode = id.Equals("LeftTrackpad", StringComparison.OrdinalIgnoreCase)
-                ? profile.LeftTrackpad
-                : profile.RightTrackpad;
-            // Mouse-joystick trackball is return-friction only (see MouseJoystickReturnFriction).
-            if (mode != TrackpadMode.AsMouse)
-            {
-                _padTrackballVel.Remove(id);
-                continue;
-            }
-
-            var (vx, vy) = _padTrackballVel[id];
-            float friction = TrackballFrictionPerSec(surface.TrackballFriction);
-            float vScale = Math.Clamp(surface.VerticalFrictionScale, 0.1f, 5f);
-            float dt = 0.008f;
-            long now = Stopwatch.GetTimestamp();
-            if (_mouseJoyLastTick != 0)
-            {
-                float measured = (float)(now - _mouseJoyLastTick) / Stopwatch.Frequency;
-                if (measured > 0f && measured < 0.25f)
-                    dt = measured;
-            }
-
-            float decayX = MathF.Exp(-friction * dt);
-            float decayY = MathF.Exp(-friction * vScale * dt);
-            vx *= decayX;
-            vy *= decayY;
-            if (Math.Abs(vx) < 0.002f && Math.Abs(vy) < 0.002f)
-            {
-                _padTrackballVel.Remove(id);
-                continue;
-            }
-            _padTrackballVel[id] = (vx, vy);
-
-            _mouseAccumX += vx;
-            _mouseAccumY += -vy;
-        }
-    }
-
-    static float TrackballFrictionPerSec(TrackballFriction f) => f switch
-    {
-        TrackballFriction.Off => 0.8f,
-        TrackballFriction.Low => 2f,
-        TrackballFriction.Medium => 5f,
-        TrackballFriction.High => 10f,
-        TrackballFriction.ExtraHigh => 16f,
-        _ => 5f
-    };
-
-    /// <summary>Return-to-center rates for mouse-joystick trackball (lower = longer linger).</summary>
-    static float MouseJoystickTrackballReturnPerSec(TrackballFriction f) => f switch
-    {
-        TrackballFriction.Off => 0.5f,
-        TrackballFriction.Low => 1.0f,
-        TrackballFriction.Medium => 2.2f,
-        TrackballFriction.High => 5.0f,
-        TrackballFriction.ExtraHigh => 9.0f,
-        _ => 2.2f
-    };
-
-    static (float X, float Y) Rotate2D(float x, float y, float degrees)
-    {
-        if (Math.Abs(degrees) < 0.01f) return (x, y);
-        float rad = degrees * (MathF.PI / 180f);
-        float c = MathF.Cos(rad);
-        float s = MathF.Sin(rad);
-        return (x * c - y * s, x * s + y * c);
-    }
-
-    bool IsGyroActive(ControllerProfile profile, InputFrame frame)
-    {
-        var buttons = profile.GyroButtons;
-        if (buttons is null || buttons.Count == 0)
-            return true; // Steam: no buttons selected → always on
-
-        bool pressed = profile.GyroButtonCombine == GyroButtonCombine.All
-            ? buttons.All(id => frame.GetDigital(id))
-            : buttons.Any(id => frame.GetDigital(id));
-
-        switch (profile.GyroButtonMode)
-        {
-            case GyroButtonMode.HoldToEnable:
-                return pressed;
-            case GyroButtonMode.HoldToSuppress:
-                return !pressed;
-            case GyroButtonMode.Toggle:
-                if (pressed && !_gyroTogglePrevPressed)
-                    _gyroToggleOn = !_gyroToggleOn;
-                _gyroTogglePrevPressed = pressed;
-                return _gyroToggleOn;
-            default:
-                return true;
-        }
-    }
-
-    void ApplyGyro(ControllerProfile profile, float ngx, float ngy, ref Xbox360InputState state)
-    {
-        float calib = Math.Clamp(profile.GyroDotsPer360, 500f, 20000f) / 6545f;
-        float sx = profile.GyroSensitivityX * profile.GyroSensitivity * calib;
-        float sy = profile.GyroSensitivityY * profile.GyroSensitivity * calib;
-        short gx = ClampToShort(ngy * 32767f * sx * (profile.InvertGyroX ? -1 : 1));
-        short gy = ClampToShort(-ngx * 32767f * sy * (profile.InvertGyroY ? -1 : 1));
-        if (profile.Gyro == GyroMode.AsRightStick)
-        {
-            state.ThumbRX = (short)Math.Clamp(state.ThumbRX + gx, short.MinValue, short.MaxValue);
-            state.ThumbRY = (short)Math.Clamp(state.ThumbRY + gy, short.MinValue, short.MaxValue);
-        }
-        else if (profile.Gyro == GyroMode.AsMouse)
-        {
-            _mouseAccumX += gx / 2000.0;
-            _mouseAccumY += -gy / 2000.0;
-        }
-        else if (profile.Gyro == GyroMode.AsMouseJoystick)
-        {
-            AddMouseJoystick(
-                ngy * MouseJoystickGyroGain * sx * (profile.InvertGyroX ? -1 : 1),
-                -ngx * MouseJoystickGyroGain * sy * (profile.InvertGyroY ? -1 : 1));
-        }
-    }
-
-    void UpdateFlick(string id, float ax, float ay, TrackpadSurfaceSettings surface)
-    {
-        float mag = MathF.Sqrt(ax * ax + ay * ay);
-        if (mag < 0.15f)
-            return;
-
-        float angle = MathF.Atan2(ax, ay);
-        if (!_flickPads.TryGetValue(id, out var flick))
-        {
-            _flickPads[id] = new FlickPadState { LastAngle = angle, HasAngle = true };
-            return;
-        }
-
-        if (!flick.HasAngle)
-        {
-            flick.LastAngle = angle;
-            flick.HasAngle = true;
-            return;
-        }
-
-        float delta = angle - flick.LastAngle;
-        // Wrap to [-π, π]
-        while (delta > MathF.PI) delta -= MathF.Tau;
-        while (delta < -MathF.PI) delta += MathF.Tau;
-        flick.AccumYaw += delta;
-        flick.LastAngle = angle;
-    }
-
-    void FinishFlick(string id, TrackpadSurfaceSettings surface)
-    {
-        if (!_flickPads.Remove(id, out var flick) || !flick.HasAngle)
-            return;
-
-        // Radians of pad arc → mouse yaw pixels.
-        float sens = Math.Clamp(surface.FlickSensitivity, 0.1f, 5f);
-        _mouseAccumX += flick.AccumYaw * (480f * sens);
-    }
+    public bool TryConsumeMouseHaptic(out bool rightPad, out byte intensity) =>
+        _trackpad.TryConsumeMouseHaptic(out rightPad, out intensity);
 
     public bool TryConsumeMouseDelta(out int dx, out int dy)
     {
@@ -818,32 +348,35 @@ public sealed class MappingEngine
 
     public bool TryConsumeMouseWheel(out int wheelDelta)
     {
-        if (Math.Abs(_wheelAccum) < 120)
+        double total = _wheelAccum + _trackpad.WheelAccum;
+        if (Math.Abs(total) < 120)
         {
             wheelDelta = 0;
             return false;
         }
 
-        wheelDelta = (int)(_wheelAccum / 120) * 120;
-        _wheelAccum -= wheelDelta;
+        wheelDelta = (int)(total / 120) * 120;
+        double remaining = wheelDelta;
+        if (_wheelAccum != 0 && Math.Sign(_wheelAccum) == Math.Sign(remaining))
+        {
+            double take = Math.Min(Math.Abs(_wheelAccum), Math.Abs(remaining)) * Math.Sign(remaining);
+            _wheelAccum -= take;
+            remaining -= take;
+        }
+        if (remaining != 0)
+            _trackpad.AddWheelDelta(-remaining);
         return true;
     }
 
     public void ReleaseAllInjected()
     {
         ResetMouseJoystick();
-        _padMouseLast.Clear();
-        _padTrackballVel.Clear();
-        _padSmooth.Clear();
-        _mouseHapticAccum.Clear();
-        _mouseHapticTicks.Clear();
+        _trackpad.Reset();
         _pressStarted.Clear();
         _longFired.Clear();
         _prevDigitalPressed.Clear();
-        _flickPads.Clear();
         _wheelAccum = 0;
-        _gyroToggleOn = false;
-        _gyroTogglePrevPressed = false;
+        _gyro.Reset();
         foreach (var token in _heldKeys.ToList())
             ReleaseKeyToken(token);
         _heldKeys.Clear();
@@ -915,10 +448,8 @@ public sealed class MappingEngine
     static short ApplySensitivityShort(short value, float sensitivity, bool invert)
     {
         float v = value * sensitivity * (invert ? -1 : 1);
-        return ClampToShort(v);
+        return MappingMath.ClampToShort(v);
     }
-
-    static short ClampToShort(float v) => (short)Math.Clamp((int)v, short.MinValue, short.MaxValue);
 
     static byte ScaleAnalog(float n, float deadzone)
     {

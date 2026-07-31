@@ -376,14 +376,40 @@ sealed class InstallEngine
         key.SetValue("AllowAllTrustedApps", 1, RegistryValueKind.DWord);
     }
 
-    static void TrustCertificate(string cerPath)
+    void TrustCertificate(string cerPath)
     {
         using var cert = new X509Certificate2(cerPath);
-        using var store = new X509Store(StoreName.TrustedPeople, StoreLocation.CurrentUser);
-        store.Open(OpenFlags.ReadWrite);
-        var exists = store.Certificates.Find(X509FindType.FindByThumbprint, cert.Thumbprint, validOnly: false);
-        if (exists.Count == 0)
-            store.Add(cert);
+        _log("Certificate thumbprint: " + cert.Thumbprint);
+
+        // Self-signed MSIX needs the signing cert in a trusted root store.
+        // TrustedPeople alone often yields CERT_E_UNTRUSTEDROOT on clean PCs.
+        EnsureCertInStore(cert, StoreName.Root, StoreLocation.LocalMachine, "LocalMachine\\Root");
+        EnsureCertInStore(cert, StoreName.TrustedPeople, StoreLocation.LocalMachine, "LocalMachine\\TrustedPeople");
+        EnsureCertInStore(cert, StoreName.Root, StoreLocation.CurrentUser, "CurrentUser\\Root");
+        EnsureCertInStore(cert, StoreName.TrustedPeople, StoreLocation.CurrentUser, "CurrentUser\\TrustedPeople");
+    }
+
+    void EnsureCertInStore(X509Certificate2 cert, StoreName name, StoreLocation location, string label)
+    {
+        try
+        {
+            using var store = new X509Store(name, location);
+            store.Open(OpenFlags.ReadWrite);
+            var exists = store.Certificates.Find(X509FindType.FindByThumbprint, cert.Thumbprint, validOnly: false);
+            if (exists.Count == 0)
+            {
+                store.Add(cert);
+                _log("Trusted certificate → " + label);
+            }
+            else
+            {
+                _log("Certificate already in " + label);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log("Warning: could not add cert to " + label + ": " + ex.Message);
+        }
     }
 
     static async Task RemoveOldWidgetPackagesAsync(CancellationToken ct)

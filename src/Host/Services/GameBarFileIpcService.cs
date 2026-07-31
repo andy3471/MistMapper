@@ -26,6 +26,7 @@ public sealed class GameBarFileIpcService : IDisposable
 
     readonly ProfileService _profiles;
     readonly BridgeService _bridge;
+    readonly HostCommandService _commands;
     readonly System.Threading.Timer _timer;
     string? _localStatePath;
     string? _lastRequestId;
@@ -34,10 +35,11 @@ public sealed class GameBarFileIpcService : IDisposable
     string? _lastIconGamePath;
     string _lastIconToken = "";
 
-    public GameBarFileIpcService(ProfileService profiles, BridgeService bridge)
+    public GameBarFileIpcService(ProfileService profiles, BridgeService bridge, HostCommandService commands)
     {
         _profiles = profiles;
         _bridge = bridge;
+        _commands = commands;
         // Do not subscribe to StatusChanged — bridging fires it every frame and races the UWP reader.
         // The timer publishes pressed/status; profile edits force an immediate write.
         _timer = new System.Threading.Timer(_ => Tick(), null, 400, 200);
@@ -168,12 +170,9 @@ public sealed class GameBarFileIpcService : IDisposable
                 if (bits.Length < 3) throw new ArgumentException("Invalid remap payload");
                 if (!Enum.TryParse<PhysicalInput>(bits[1], true, out var phys))
                     throw new ArgumentException("Invalid physical");
-                if (phys == PhysicalInput.Steam)
-                    throw new InvalidOperationException("Steam/Guide is locked to Xbox Guide.");
                 if (!Enum.TryParse<XboxOutput>(bits[2], true, out var xbox))
                     throw new ArgumentException("Invalid xbox");
-                bits[0] = _bridge.ResolveRemapTargetProfileId(bits[0]);
-                _profiles.Remap(bits[0], phys, xbox);
+                _commands.RemapButton(bits[0], phys, xbox);
                 return null;
             }
 
@@ -184,11 +183,8 @@ public sealed class GameBarFileIpcService : IDisposable
                 // value: Xbox name | VK int | Left/Right/Middle/ScrollUp/ScrollDown
                 var bits = payload.Split('\t');
                 if (bits.Length < 3) throw new ArgumentException("Invalid remapAction payload");
-                if (bits[1].Equals("Steam", StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("Steam/Guide is locked to Xbox Guide.");
-                bits[0] = _bridge.ResolveRemapTargetProfileId(bits[0]);
-                var action = ParseAction(bits);
-                _profiles.RemapAction(bits[0], bits[1], action);
+                var action = HostCommandService.ParseAction(bits);
+                _commands.RemapAction(bits[0], bits[1], action);
                 return null;
             }
 
@@ -197,17 +193,14 @@ public sealed class GameBarFileIpcService : IDisposable
                 // profileId \t inputId \t activator \t slot \t kind \t value [\t modifiers]
                 var bits = payload.Split('\t');
                 if (bits.Length < 5) throw new ArgumentException("Invalid setBinding payload");
-                if (bits[1].Equals("Steam", StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("Steam/Guide is locked to Xbox Guide.");
                 if (!Enum.TryParse<ActivatorType>(bits[2], true, out var activator))
                     throw new ArgumentException("Invalid activator");
                 if (!int.TryParse(bits[3], out var slot))
                     throw new ArgumentException("Invalid slot");
-                bits[0] = _bridge.ResolveRemapTargetProfileId(bits[0]);
                 // Rebase ParseAction: kind at [4], value at [5], mods at [6]
                 var actionBits = new[] { bits[0], bits[1], bits.Length > 4 ? bits[4] : "none", bits.Length > 5 ? bits[5] : "", bits.Length > 6 ? bits[6] : "0" };
-                var action = ParseAction(actionBits);
-                _profiles.RemapBindingAction(bits[0], bits[1], activator, slot, action);
+                var action = HostCommandService.ParseAction(actionBits);
+                _commands.SetBinding(bits[0], bits[1], activator, slot, action);
                 return null;
             }
 
@@ -222,8 +215,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 if (bits.Length < 3) throw new ArgumentException("Invalid setTrackpadMode payload");
                 if (!Enum.TryParse<TrackpadMode>(bits[2], true, out var mode))
                     throw new ArgumentException("Invalid trackpad mode");
-                bits[0] = _bridge.ResolveRemapTargetProfileId(bits[0]);
-                _profiles.SetTrackpad(bits[0], bits[1].Equals("left", StringComparison.OrdinalIgnoreCase), mode);
+                _commands.SetTrackpadMode(bits[0], bits[1].Equals("left", StringComparison.OrdinalIgnoreCase), mode);
                 return null;
             }
 
@@ -234,8 +226,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 if (bits.Length < 2) throw new ArgumentException("Invalid setGyroMode payload");
                 if (!Enum.TryParse<GyroMode>(bits[1], true, out var mode))
                     throw new ArgumentException("Invalid gyro mode");
-                bits[0] = _bridge.ResolveRemapTargetProfileId(bits[0]);
-                _profiles.SetGyro(bits[0], mode);
+                _commands.SetGyroMode(bits[0], mode);
                 return null;
             }
 
@@ -326,8 +317,7 @@ public sealed class GameBarFileIpcService : IDisposable
                 // JSON payload matching SensitivityPayload
                 var p = JsonSerializer.Deserialize<SensitivityPayload>(payload, CaseInsensitiveJson)
                     ?? throw new ArgumentException("Invalid sensitivity payload");
-                p.ProfileId = _bridge.ResolveRemapTargetProfileId(p.ProfileId);
-                _profiles.SetSensitivity(p.ProfileId, p);
+                _commands.SetSensitivity(p.ProfileId, p);
                 return null;
             }
 
@@ -403,21 +393,6 @@ public sealed class GameBarFileIpcService : IDisposable
             default:
                 throw new InvalidOperationException("Unknown command: " + command);
         }
-    }
-
-    static OutputAction ParseAction(string[] bits)
-    {
-        var kind = bits.Length > 2 ? bits[2] : "none";
-        var value = bits.Length > 3 ? bits[3] : "";
-        var mods = bits.Length > 4 && int.TryParse(bits[4], out var m) ? (KeyModifiers)m : KeyModifiers.None;
-
-        return kind.ToLowerInvariant() switch
-        {
-            "xbox" when Enum.TryParse<XboxOutput>(value, true, out var xbox) => OutputAction.FromXbox(xbox),
-            "key" when int.TryParse(value, out var vk) => OutputAction.FromKey(vk, mods),
-            "mouse" when Enum.TryParse<MouseButtonOutput>(value, true, out var mb) => OutputAction.FromMouse(mb),
-            _ => OutputAction.None()
-        };
     }
 
     void WriteStateSafe()

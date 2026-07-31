@@ -9,14 +9,16 @@ public sealed class IpcServer : IDisposable
 {
     readonly ProfileService _profiles;
     readonly BridgeService _bridge;
+    readonly HostCommandService _commands;
     readonly CancellationTokenSource _cts = new();
     readonly List<Task> _clients = [];
     Task? _listenTask;
 
-    public IpcServer(ProfileService profiles, BridgeService bridge)
+    public IpcServer(ProfileService profiles, BridgeService bridge, HostCommandService commands)
     {
         _profiles = profiles;
         _bridge = bridge;
+        _commands = commands;
     }
 
     public void Start()
@@ -141,14 +143,14 @@ public sealed class IpcServer : IDisposable
                     throw new ArgumentException("Invalid physical input");
                 if (!Enum.TryParse<XboxOutput>(p.Xbox, true, out var xbox))
                     throw new ArgumentException("Invalid xbox output");
-                _profiles.Remap(p.ProfileId, phys, xbox);
+                _commands.RemapButton(p.ProfileId, phys, xbox);
                 break;
             }
 
             case IpcCommands.RemapAction:
             {
                 var p = Deserialize<RemapActionPayload>(request.Payload);
-                _profiles.RemapAction(p.ProfileId, p.InputId, p.Action ?? OutputAction.None());
+                _commands.RemapAction(p.ProfileId, p.InputId, p.Action ?? OutputAction.None());
                 break;
             }
 
@@ -157,7 +159,7 @@ public sealed class IpcServer : IDisposable
                 var p = Deserialize<SetBindingPayload>(request.Payload);
                 if (!Enum.TryParse<ActivatorType>(p.Activator, true, out var activator))
                     throw new ArgumentException("Invalid activator");
-                _profiles.RemapBindingAction(
+                _commands.SetBinding(
                     p.ProfileId, p.InputId, activator, p.Slot, p.Action ?? OutputAction.None());
                 break;
             }
@@ -183,7 +185,7 @@ public sealed class IpcServer : IDisposable
                 var p = Deserialize<SetTrackpadModePayload>(request.Payload);
                 if (!Enum.TryParse<TrackpadMode>(p.Mode, true, out var mode))
                     throw new ArgumentException("Invalid trackpad mode");
-                _profiles.SetTrackpad(p.ProfileId, p.Left, mode);
+                _commands.SetTrackpadMode(p.ProfileId, p.Left, mode);
                 break;
             }
 
@@ -192,7 +194,7 @@ public sealed class IpcServer : IDisposable
                 var p = Deserialize<SetGyroModePayload>(request.Payload);
                 if (!Enum.TryParse<GyroMode>(p.Mode, true, out var mode))
                     throw new ArgumentException("Invalid gyro mode");
-                _profiles.SetGyro(p.ProfileId, mode, p.Sensitivity);
+                _commands.SetGyroMode(p.ProfileId, mode, p.Sensitivity);
                 break;
             }
 
@@ -206,7 +208,7 @@ public sealed class IpcServer : IDisposable
             case IpcCommands.SetSensitivity:
             {
                 var p = Deserialize<SensitivityPayload>(request.Payload);
-                _profiles.SetSensitivity(p.ProfileId, p);
+                _commands.SetSensitivity(p.ProfileId, p);
                 break;
             }
 

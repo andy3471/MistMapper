@@ -36,11 +36,23 @@ Set-ItemProperty -Path $keyPath -Name 'AllowAllTrustedApps' -Value 1 -Type DWord
 
 if ($cer) {
     $certificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($cer.FullName)
-    $exists = Get-ChildItem Cert:\CurrentUser\TrustedPeople -ErrorAction SilentlyContinue |
-        Where-Object { $_.Thumbprint -eq $certificate.Thumbprint }
-    if (-not $exists) {
-        Import-Certificate -FilePath $cer.FullName -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
-        Write-Host "Trusted certificate $($certificate.Thumbprint)"
+    $stores = @(
+        'Cert:\LocalMachine\Root',
+        'Cert:\LocalMachine\TrustedPeople',
+        'Cert:\CurrentUser\Root',
+        'Cert:\CurrentUser\TrustedPeople'
+    )
+    foreach ($storePath in $stores) {
+        $exists = Get-ChildItem $storePath -ErrorAction SilentlyContinue |
+            Where-Object { $_.Thumbprint -eq $certificate.Thumbprint }
+        if (-not $exists) {
+            try {
+                Import-Certificate -FilePath $cer.FullName -CertStoreLocation $storePath | Out-Null
+                Write-Host "Trusted certificate $($certificate.Thumbprint) → $storePath"
+            } catch {
+                Write-Host "Warning: could not add cert to $storePath : $_"
+            }
+        }
     }
 }
 

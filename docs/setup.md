@@ -65,11 +65,11 @@ Tray menu:
 
 All remapping (Xbox / keyboard / mouse, trackpads, gyro, per-game bind) is done in the **Game Bar widget**.
 
-Profiles live in `%AppData%\MistMapper\profiles.json`.
+Profiles live in `%AppData%\MistMapper\profiles.json` and are **not** wiped by reinstalling or upgrading MistMapper (the Setup app replaces Host/widget binaries only).
 
 ### Drivers
 
-The host uses a pluggable **driver** model. v1 ships **Steam Controller** only (`steam-controller`). The bridge opens the first connected driver, maps an `InputFrame` through the active profile, and sends output to VIIPER / keyboard / mouse sinks.
+The host uses a pluggable **driver** model. Current drivers: Steam Controller (SC1/SC2) and DualSense / DualSense Edge. The bridge can open multiple pads, map each `InputFrame` through the active (or per-slot) profile, and send output to VIIPER / keyboard / mouse sinks.
 
 ### Per-game profiles
 
@@ -83,7 +83,9 @@ The host matches the foreground process **exe name** (optional path contains). M
 
 Keyboard injection uses `SendInput`. Some elevated games may not receive injected keys unless the host runs elevated too. Virtual Xbox output via VIIPER does not have that limitation.
 
-## 4. Xbox mode / FSE startup (Path 1 — default)
+## 4. Xbox mode / FSE startup (Path 1 — supported default)
+
+**Path 1 is the supported way** to run MistMapper inside Xbox Full Screen Experience. Prefer it over Path 2/3 unless Path 1 fails on your device.
 
 The host must start **inside** Xbox Full Screen Experience without opening Game Bar.
 
@@ -98,7 +100,7 @@ A helper script is also written to:
 
 `%AppData%\MistMapper\enable-fse-startup.ps1`
 
-### Path 2 — AnyFSE
+### Path 2 — AnyFSE (advanced)
 
 If you use [AnyFSE](https://github.com/ashpynov/AnyFSE) as the FSE home app:
 
@@ -106,7 +108,7 @@ If you use [AnyFSE](https://github.com/ashpynov/AnyFSE) as the FSE home app:
 2. Configure your preferred launcher (Xbox, Playnite, …).  
 3. Set **custom startup application** to `MistMapper.exe` (with `--tray`).
 
-### Path 3 — FseHome wrapper (optional)
+### Path 3 — FseHome wrapper (advanced / optional)
 
 `MistMapper.FseHome.exe` starts the host, then optionally a handoff launcher:
 
@@ -176,17 +178,21 @@ IPC: the widget writes requests into its package `LocalState`; the host watches 
 
 Native Windows **gamepad PIN** login expects a real Xbox-class pad present at LogonUI. Our virtual pad is created after sign-in, so it cannot drive cold-boot gamepad PIN. For console-style boots, use Windows auto sign-in + FSE Path 1.
 
-## 7. Troubleshooting
+## 7. Troubleshooting / Fix this
 
 | Symptom | Check |
 |---------|--------|
-| `VIIPER unavailable` / red banner | `viiper server` running? usbip-win2 installed? port 3242 free? |
-| Waiting for controller | USB/Puck connected? Steam fully exited? |
-| Double input | Close Steam; only one bridge tool at a time |
-| No pad in FSE | Startup set to **Start at log in**; try Path 2 |
+| `VIIPER unavailable` / red banner | Run Setup again with VIIPER checked, or `scripts\install-viiper.ps1 -Start`. Is usbip-win2 installed? Port 3242 free? |
+| Waiting for controller | USB/dongle connected? Steam fully exited? |
+| Double input | Close Steam, or leave **Pause when Steam is open** enabled in Game Bar Settings |
+| No pad in FSE | Startup set to **Start at log in** (Path 1 — supported). AnyFSE/FseHome are advanced fallbacks |
 | Lock screen no mouse | Ensure host restored lizard (status `PausedLocked`) |
-| Keyboard binds ignored in game | Try elevating the host; pad binds via VIIPER are preferred for games |
+| Keyboard binds ignored in game | Prefer Xbox binds via VIIPER; elevating the host may help SendInput |
 | Per-game profile not switching | Bind while the game is focused; ignored shells (Game Bar, etc.) |
+| Profiles missing after update | They live in `%AppData%\MistMapper\profiles.json` (not under Program Files) |
+| Widget missing after update | Re-run `MistMapper-Setup.exe` or `Install-GameBarWidget.cmd` elevated |
+
+Host logs (when enabled): `%AppData%\MistMapper\logs\`
 
 ## Architecture
 

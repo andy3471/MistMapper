@@ -1,3 +1,5 @@
+using MistMapper.Host.Logging;
+
 namespace MistMapper.Host;
 
 static class Program
@@ -7,6 +9,8 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        AppLog.Current.Info("MistMapper starting");
+
         // Ensure VIIPER can find usbip.exe when we (re)start it from this process.
         PrependToPath(@"C:\Program Files\USBip");
         PrependToPath(Path.Combine(

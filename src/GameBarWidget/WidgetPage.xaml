@@ -249,7 +249,7 @@
                     <ToggleSwitch x:Name="PauseSteamToggle" Header="Pause when Steam is running"
                                   OffContent="Off" OnContent="On" Margin="0,0,0,10"
                                   Toggled="PauseSteamToggle_Toggled"/>
-                    <TextBlock Text="When Steam is open, MistMapper yields so Steam Input can take over the controller."
+                    <TextBlock Text="On by default: when Steam is running, MistMapper pauses so Steam Input can own the controller (avoids double input)."
                                FontSize="13" TextWrapping="Wrap"
                                Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"/>
                 </StackPanel>

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Security.Principal;
+using MistMapper.Host.Logging;
 using MistMapper.Host.Services;
 using MistMapper.Host.UI;
 
@@ -24,8 +25,9 @@ public sealed class TrayAppContext : ApplicationContext
         _steam = new SteamWatcher();
         _session = new SessionWatcher();
         _bridge = new BridgeService(_profiles, _steam, _session);
-        _ipc = new IpcServer(_profiles, _bridge);
-        _gameBarIpc = new GameBarFileIpcService(_profiles, _bridge);
+        var commands = new HostCommandService(_profiles, _bridge);
+        _ipc = new IpcServer(_profiles, _bridge, commands);
+        _gameBarIpc = new GameBarFileIpcService(_profiles, _bridge, commands);
 
         StartupRegistration.SetEnabled(_profiles.Document.StartWithWindows);
         StartupRegistration.WriteFseHelperScript(
@@ -45,6 +47,7 @@ public sealed class TrayAppContext : ApplicationContext
         _bridge.StatusChanged += OnStatus;
         _ipc.Start();
         _bridge.Start();
+        AppLog.Current.Info("TrayAppContext started");
         OnStatus(_bridge.Status);
 
         if (openRemapperOnStart)
