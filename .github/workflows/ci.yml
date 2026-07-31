@@ -29,7 +29,9 @@ jobs:
         run: dotnet test MistMapper.sln -c Release --no-build --verbosity normal
 
   build-installer:
-    runs-on: windows-latest
+    # windows-2022 ships VS 2022 Enterprise with the Universal (UWP) workload.
+    # windows-latest may not expose the same MSBuild/UWP paths.
+    runs-on: windows-2022
     needs: build-and-test
     steps:
       - uses: actions/checkout@v4
@@ -38,6 +40,9 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
 
       - name: Build MistMapper-Setup.exe
         shell: pwsh

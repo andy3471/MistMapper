@@ -13,31 +13,51 @@ $widgetDir = Join-Path $repoRoot 'src\GameBarWidget'
 $certDir = Join-Path $widgetDir 'Certificates'
 $pfxPath = Join-Path $widgetDir 'MistMapper.GameBarWidget_TemporaryKey.pfx'
 $cerPath = Join-Path $certDir 'MistMapper.GameBarWidget.cer'
-$msbuildCandidates = @(
-    "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
-    "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
-    "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
-    "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
-    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
-    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
-    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
-    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe"
-)
-$msbuild = $msbuildCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
 
+function Find-MsBuild {
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (Test-Path $vswhere) {
+        # Prefer an install that has UWP tooling (needed for the Game Bar widget).
+        $fromUwp = & $vswhere -latest -products * `
+            -requires Microsoft.VisualStudio.Workload.Universal `
+            -requires Microsoft.Component.MSBuild `
+            -find 'MSBuild\**\Bin\MSBuild.exe' 2>$null |
+            Select-Object -First 1
+        if ($fromUwp) { return $fromUwp }
+
+        $fromMsbuild = & $vswhere -latest -products * `
+            -requires Microsoft.Component.MSBuild `
+            -find 'MSBuild\**\Bin\MSBuild.exe' 2>$null |
+            Select-Object -First 1
+        if ($fromMsbuild) { return $fromMsbuild }
+    }
+
+    $candidates = @(
+        "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles}\Microsoft Visual Studio\2025\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
+    )
+    return $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+}
+
+$msbuild = Find-MsBuild
 if (-not $msbuild) {
     throw "MSBuild not found. Install Visual Studio 2022 with the Universal Windows Platform workload."
 }
 Write-Host "Using MSBuild: $msbuild"
 
 # Prefer MSBuild that has UWP XAML targets
+$vsRoot = Split-Path (Split-Path (Split-Path $msbuild))
 $xamlTargets = @(
-    (Join-Path (Split-Path (Split-Path (Split-Path $msbuild))) 'Microsoft\WindowsXaml\v17.0\Microsoft.Windows.UI.Xaml.CSharp.targets'),
+    (Join-Path $vsRoot 'MSBuild\Microsoft\WindowsXaml\v17.0\Microsoft.Windows.UI.Xaml.CSharp.targets'),
+    (Join-Path $vsRoot 'Microsoft\WindowsXaml\v17.0\Microsoft.Windows.UI.Xaml.CSharp.targets'),
     'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Microsoft\WindowsXaml\v17.0\Microsoft.Windows.UI.Xaml.CSharp.targets',
     'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\WindowsXaml\v17.0\Microsoft.Windows.UI.Xaml.CSharp.targets',
-    'C:\Program Files (x86)\Microsoft Visual Studio\2022\Enterprise\MSBuild\Microsoft\WindowsXaml\v17.0\Microsoft.Windows.UI.Xaml.CSharp.targets',
-    'C:\Program Files (x86)\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\WindowsXaml\v17.0\Microsoft.Windows.UI.Xaml.CSharp.targets',
-    'C:\Program Files (x86)\MSBuild\Microsoft\WindowsXaml\v16.0\Microsoft.Windows.UI.Xaml.CSharp.targets'
+    'C:\Program Files (x86)\Microsoft Visual Studio\2022\Enterprise\MSBuild\Microsoft\WindowsXaml\v17.0\Microsoft.Windows.UI.Xaml.CSharp.targets'
 )
 $hasXaml = $xamlTargets | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $hasXaml) {
