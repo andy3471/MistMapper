@@ -7,10 +7,10 @@
 
     <!-- Single SemVer for Host, Setup, and related packages. Widget Package.appxmanifest
          must use a four-part version; keep it in sync (Major.Minor.Patch.0). -->
-    <Version>0.0.1</Version>
-    <AssemblyVersion>0.0.1.0</AssemblyVersion>
-    <FileVersion>0.0.1.0</FileVersion>
-    <InformationalVersion>0.0.1</InformationalVersion>
+    <Version>0.0.2</Version>
+    <AssemblyVersion>0.0.2.0</AssemblyVersion>
+    <FileVersion>0.0.2.0</FileVersion>
+    <InformationalVersion>0.0.2</InformationalVersion>
     <Product>MistMapper</Product>
     <Company>MistMapper</Company>
   </PropertyGroup>

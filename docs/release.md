@@ -11,8 +11,8 @@ Use this when cutting a GitHub release (`v*` tag).
 ## Cut the release
 
 ```powershell
-git tag -a v0.0.1 -m "v0.0.1"
-git push origin v0.0.1
+git tag -a v0.0.2 -m "v0.0.2"
+git push origin v0.0.2
 ```
 
 ## Verify CI

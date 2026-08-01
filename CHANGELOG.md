@@ -2,6 +2,13 @@
 
 All notable changes to MistMapper are documented here.
 
+## [0.0.2] - 2026-08-01
+
+### Fixed
+
+- Mouse / mouse-joystick trackpad feel: friction while touching, less-slidy defaults, mode-gated advanced settings
+- Trackball vs linger labeling and behavior for relative mouse modes
+
 ## [0.0.1] - 2026-08-01
 
 ### Added
