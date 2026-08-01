@@ -149,10 +149,10 @@ public sealed class MappingEngine
             float dt = (float)(now - _mouseJoyLastTick) / Stopwatch.Frequency;
             if (dt > 0f && dt < 0.25f)
             {
-                float friction = TrackpadSurfaceProcessor.GetMouseJoystickReturnFriction(profile, frame, MouseJoystickFrictionPerSec);
-                float decay = MathF.Exp(-friction * dt);
-                _mouseJoyX *= decay;
-                _mouseJoyY *= decay;
+                var (frictionX, frictionY) = TrackpadSurfaceProcessor.GetMouseJoystickReturnFriction(
+                    profile, frame, MouseJoystickFrictionPerSec);
+                _mouseJoyX *= MathF.Exp(-frictionX * dt);
+                _mouseJoyY *= MathF.Exp(-frictionY * dt);
             }
         }
 

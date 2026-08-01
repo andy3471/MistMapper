@@ -17,22 +17,23 @@ static class MappingMath
 
     public static float TrackballFrictionPerSec(TrackballFriction f) => f switch
     {
-        TrackballFriction.Off => 0.8f,
-        TrackballFriction.Low => 2f,
-        TrackballFriction.Medium => 5f,
-        TrackballFriction.High => 10f,
-        TrackballFriction.ExtraHigh => 16f,
-        _ => 5f
+        // "Off" = lightest coast, not zero — ice-smooth 0.8 made mouse feel endlessly slidy.
+        TrackballFriction.Off => 2.5f,
+        TrackballFriction.Low => 4f,
+        TrackballFriction.Medium => 7f,
+        TrackballFriction.High => 12f,
+        TrackballFriction.ExtraHigh => 20f,
+        _ => 7f
     };
 
     /// <summary>Return-to-center rates for mouse-joystick trackball (lower = longer linger).</summary>
     public static float MouseJoystickTrackballReturnPerSec(TrackballFriction f) => f switch
     {
-        TrackballFriction.Off => 0.5f,
-        TrackballFriction.Low => 1.0f,
-        TrackballFriction.Medium => 2.2f,
-        TrackballFriction.High => 5.0f,
-        TrackballFriction.ExtraHigh => 9.0f,
-        _ => 2.2f
+        TrackballFriction.Off => 1.2f,
+        TrackballFriction.Low => 2.0f,
+        TrackballFriction.Medium => 3.5f,
+        TrackballFriction.High => 6.0f,
+        TrackballFriction.ExtraHigh => 11.0f,
+        _ => 3.5f
     };
 }

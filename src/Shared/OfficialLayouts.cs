@@ -114,6 +114,8 @@ public static class OfficialLayouts
         p.GyroButtonCombine = GyroButtonCombine.Any;
         p.TrackpadSensitivityX = 1.2f;
         p.TrackpadSensitivityY = 1.2f;
+        p.RightTrackpadSettings.TrackballMode = true;
+        p.RightTrackpadSettings.TrackballFriction = TrackballFriction.High;
         p.SetAction("RightTrackpadClick", OutputAction.FromXbox(XboxOutput.RsClick));
         p.SetAction("R4", OutputAction.FromXbox(XboxOutput.A));
         p.SetAction("L4", OutputAction.FromXbox(XboxOutput.B));

@@ -619,6 +619,7 @@ namespace MistMapper.GameBarWidget
 
         async Task ShowTrackpadAdvancedSettingsAsync(string side)
         {
+            var mode = _modeValues.ContainsKey(side) ? _modeValues[side] : "Off";
             var draftTrackball = _trackballMode[side];
             var draftFriction = _trackballFriction[side];
             var draftVert = _padVertFriction[side];
@@ -627,50 +628,98 @@ namespace MistMapper.GameBarWidget
             var draftHaptics = _mouseHaptics[side];
             var draftFlick = _flickSensitivity[side];
 
+            bool isMouse = mode.Equals("AsMouse", StringComparison.OrdinalIgnoreCase);
+            bool isMouseJoy = mode.Equals("AsMouseJoystick", StringComparison.OrdinalIgnoreCase);
+            bool isFlick = mode.Equals("FlickStick", StringComparison.OrdinalIgnoreCase);
+            bool isScroll = mode.Equals("ScrollWheel", StringComparison.OrdinalIgnoreCase);
+            bool isStick = mode.Equals("AsLeftStick", StringComparison.OrdinalIgnoreCase)
+                || mode.Equals("AsRightStick", StringComparison.OrdinalIgnoreCase);
+            bool showTrackball = isMouse || isMouseJoy;
+            bool showHaptics = isMouse || isMouseJoy;
+            bool showFeel = isMouse || isMouseJoy || isScroll || isFlick || isStick;
+            bool showFlick = isFlick;
+            bool any = showTrackball || showHaptics || showFlick || showFeel;
+
             AdvancedSettingsContent.Children.Clear();
             AdvancedSettingsTitle.Text = ModeSurfaceLabel(side);
-            AdvancedSettingsSubtitle.Text = "B cancel · Save when done";
+            AdvancedSettingsSubtitle.Text = FormatModeLabel(mode) + " · B cancel · Save when done";
 
-            AdvancedSettingsContent.Children.Add(SectionLabel("Trackball"));
-            var trackball = MakePillToggle("Trackball Mode", draftTrackball);
-            trackball.Checked += (_, __) => draftTrackball = true;
-            trackball.Unchecked += (_, __) => draftTrackball = false;
-            AdvancedSettingsContent.Children.Add(trackball);
-            AdvancedSettingsContent.Children.Add(Hint("Keeps momentum after you lift your thumb."));
+            if (!any)
+            {
+                AdvancedSettingsContent.Children.Add(Hint(
+                    "No advanced settings for " + FormatModeLabel(mode) + "."));
+                if (!await ShowAdvancedSettingsSheetAsync())
+                    return;
+                return;
+            }
 
-            AdvancedSettingsContent.Children.Add(BuildChoicePillRow(
-                "Trackball Friction",
-                TrackballFrictions, TrackballFrictions.Select(FormatModeLabel).ToArray(),
-                draftFriction, v => draftFriction = v));
+            if (showTrackball)
+            {
+                AdvancedSettingsContent.Children.Add(SectionLabel(isMouseJoy ? "Return / linger" : "Trackball"));
+                var trackball = MakePillToggle(
+                    isMouseJoy ? "Linger after lift" : "Trackball Mode",
+                    draftTrackball);
+                trackball.Checked += (_, __) => draftTrackball = true;
+                trackball.Unchecked += (_, __) => draftTrackball = false;
+                AdvancedSettingsContent.Children.Add(trackball);
+                AdvancedSettingsContent.Children.Add(Hint(isMouseJoy
+                    ? "On: Trackball Friction controls how fast the virtual stick returns to center (also while touching)."
+                    : "On: cursor keeps moving after you lift, slowed by Trackball Friction."));
 
-            AdvancedSettingsContent.Children.Add(SectionLabel("Mouse haptics"));
-            AdvancedSettingsContent.Children.Add(BuildChoicePillRow(
-                "Intensity",
-                MouseHapticsIntensities, MouseHapticsIntensities.Select(FormatModeLabel).ToArray(),
-                draftHaptics, v => draftHaptics = v));
-            AdvancedSettingsContent.Children.Add(Hint("Steam-style ticks while sliding as mouse / mouse joystick."));
+                AdvancedSettingsContent.Children.Add(BuildChoicePillRow(
+                    "Trackball Friction",
+                    TrackballFrictions, TrackballFrictions.Select(FormatModeLabel).ToArray(),
+                    draftFriction, v => draftFriction = v));
+                AdvancedSettingsContent.Children.Add(Hint(isMouseJoy
+                    ? "Lower = stick tip lingers longer. Higher = snappier return."
+                    : "Lower = longer coast after lift. Higher = stops sooner."));
+            }
 
-            AdvancedSettingsContent.Children.Add(SectionLabel("Flick Stick"));
-            var flick = MakeStyledSlider("Flick Sensitivity %", 10, 300, 5, draftFlick * 100);
-            flick.ValueChanged += (_, ev) => draftFlick = ev.NewValue / 100.0;
-            AdvancedSettingsContent.Children.Add(flick);
-            AdvancedSettingsContent.Children.Add(Hint("Yaw pixels from pad arc when you flick and lift."));
+            if (showHaptics)
+            {
+                AdvancedSettingsContent.Children.Add(SectionLabel("Mouse haptics"));
+                AdvancedSettingsContent.Children.Add(BuildChoicePillRow(
+                    "Intensity",
+                    MouseHapticsIntensities, MouseHapticsIntensities.Select(FormatModeLabel).ToArray(),
+                    draftHaptics, v => draftHaptics = v));
+                AdvancedSettingsContent.Children.Add(Hint("Ticks while sliding on the pad."));
+            }
 
-            AdvancedSettingsContent.Children.Add(SectionLabel("Feel"));
-            var vFric = MakeStyledSlider("Vertical Friction Scale %", 10, 300, 5, draftVert * 100);
-            vFric.ValueChanged += (_, ev) => draftVert = ev.NewValue / 100.0;
-            AdvancedSettingsContent.Children.Add(vFric);
-            AdvancedSettingsContent.Children.Add(Hint("Higher stops up/down flicks sooner (good for camera yaw)."));
+            if (showFlick)
+            {
+                AdvancedSettingsContent.Children.Add(SectionLabel("Flick Stick"));
+                var flick = MakeStyledSlider("Flick Sensitivity %", 10, 300, 5, draftFlick * 100);
+                flick.ValueChanged += (_, ev) => draftFlick = ev.NewValue / 100.0;
+                AdvancedSettingsContent.Children.Add(flick);
+                AdvancedSettingsContent.Children.Add(Hint("Yaw from pad arc when you flick and lift."));
+            }
 
-            var smooth = MakeStyledSlider("Smoothing", 0, 100, 1, draftSmooth);
-            smooth.ValueChanged += (_, ev) => draftSmooth = ev.NewValue;
-            AdvancedSettingsContent.Children.Add(smooth);
-            AdvancedSettingsContent.Children.Add(Hint("Higher removes jitter but adds lag."));
+            if (showFeel)
+            {
+                AdvancedSettingsContent.Children.Add(SectionLabel("Feel"));
+                if (isMouse || isMouseJoy)
+                {
+                    var vFric = MakeStyledSlider("Vertical Friction Scale %", 10, 300, 5, draftVert * 100);
+                    vFric.ValueChanged += (_, ev) => draftVert = ev.NewValue / 100.0;
+                    AdvancedSettingsContent.Children.Add(vFric);
+                    AdvancedSettingsContent.Children.Add(Hint(isMouseJoy
+                        ? "Higher stops vertical stick tip sooner than horizontal."
+                        : "Higher stops up/down coast sooner (good for camera yaw)."));
+                }
 
-            var rot = MakeStyledSlider("Rotation (°)", -45, 45, 1, draftRot);
-            rot.ValueChanged += (_, ev) => draftRot = ev.NewValue;
-            AdvancedSettingsContent.Children.Add(rot);
-            AdvancedSettingsContent.Children.Add(Hint("Cant pad axes to match a natural thumb swipe."));
+                if (isMouse || isMouseJoy || isScroll || isFlick)
+                {
+                    var smooth = MakeStyledSlider("Smoothing", 0, 100, 1, draftSmooth);
+                    smooth.ValueChanged += (_, ev) => draftSmooth = ev.NewValue;
+                    AdvancedSettingsContent.Children.Add(smooth);
+                    AdvancedSettingsContent.Children.Add(Hint("Higher removes jitter but adds lag."));
+                }
+
+                var rot = MakeStyledSlider("Rotation (°)", -45, 45, 1, draftRot);
+                rot.ValueChanged += (_, ev) => draftRot = ev.NewValue;
+                AdvancedSettingsContent.Children.Add(rot);
+                AdvancedSettingsContent.Children.Add(Hint("Cant pad axes to match a natural thumb swipe."));
+            }
 
             if (!await ShowAdvancedSettingsSheetAsync())
                 return;
@@ -684,6 +733,21 @@ namespace MistMapper.GameBarWidget
             _flickSensitivity[side] = draftFlick;
             await SendSensitivityAsync();
         }
+
+        static bool TrackpadModeHasAdvancedSettings(string mode) =>
+            mode.Equals("AsMouse", StringComparison.OrdinalIgnoreCase)
+            || mode.Equals("AsMouseJoystick", StringComparison.OrdinalIgnoreCase)
+            || mode.Equals("FlickStick", StringComparison.OrdinalIgnoreCase)
+            || mode.Equals("ScrollWheel", StringComparison.OrdinalIgnoreCase)
+            || mode.Equals("AsLeftStick", StringComparison.OrdinalIgnoreCase)
+            || mode.Equals("AsRightStick", StringComparison.OrdinalIgnoreCase);
+
+        static bool TrackpadModeUsesDeadzone(string mode) =>
+            mode.Equals("AsLeftStick", StringComparison.OrdinalIgnoreCase)
+            || mode.Equals("AsRightStick", StringComparison.OrdinalIgnoreCase)
+            || mode.Equals("AsDpad", StringComparison.OrdinalIgnoreCase)
+            || mode.Equals("ButtonPad", StringComparison.OrdinalIgnoreCase)
+            || mode.Equals("FlickStick", StringComparison.OrdinalIgnoreCase);
 
         async Task<bool> ShowAdvancedSettingsSheetAsync()
         {

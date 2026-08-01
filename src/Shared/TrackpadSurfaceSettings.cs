@@ -3,10 +3,13 @@ namespace MistMapper.Shared;
 /// <summary>Steam-style advanced settings for one trackpad surface.</summary>
 public sealed class TrackpadSurfaceSettings
 {
-    /// <summary>When true (As Mouse), finger lift continues motion with friction.</summary>
-    public bool TrackballMode { get; set; } = true;
+    /// <summary>
+    /// As Mouse: finger lift continues cursor motion with friction.
+    /// As Mouse Joystick: uses TrackballFriction for return-to-center (linger after lift).
+    /// </summary>
+    public bool TrackballMode { get; set; }
 
-    public TrackballFriction TrackballFriction { get; set; } = TrackballFriction.Medium;
+    public TrackballFriction TrackballFriction { get; set; } = TrackballFriction.High;
 
     /// <summary>1.0 = same vertical/horizontal stop rate; higher = stop vertical sooner.</summary>
     public float VerticalFrictionScale { get; set; } = 1f;
@@ -25,8 +28,8 @@ public sealed class TrackpadSurfaceSettings
 
     public static TrackpadSurfaceSettings Clone(TrackpadSurfaceSettings? s) => new()
     {
-        TrackballMode = s?.TrackballMode ?? true,
-        TrackballFriction = s?.TrackballFriction ?? TrackballFriction.Medium,
+        TrackballMode = s?.TrackballMode ?? false,
+        TrackballFriction = s?.TrackballFriction ?? TrackballFriction.High,
         VerticalFrictionScale = s?.VerticalFrictionScale ?? 1f,
         Smoothing = s?.Smoothing ?? 20f,
         RotationDegrees = s?.RotationDegrees ?? 0f,

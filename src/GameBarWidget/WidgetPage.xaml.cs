@@ -239,11 +239,11 @@ namespace MistMapper.GameBarWidget
         string _gyroButtonCombine = "Any";
         readonly Dictionary<string, bool> _trackballMode = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
         {
-            ["left"] = true, ["right"] = true
+            ["left"] = false, ["right"] = false
         };
         readonly Dictionary<string, string> _trackballFriction = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["left"] = "Medium", ["right"] = "Medium"
+            ["left"] = "High", ["right"] = "High"
         };
         readonly Dictionary<string, double> _padSmoothing = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
         {
@@ -927,21 +927,30 @@ namespace MistMapper.GameBarWidget
                     Grid.SetColumn(btn, 0);
                     row.Children.Add(btn);
 
-                    var cog = new Button
+                    var showCog = category.Name != "Trackpads"
+                        || TrackpadModeHasAdvancedSettings(current);
+                    if (showCog)
                     {
-                        Content = "\u2699",
-                        Tag = modeKey,
-                        FontSize = 20,
-                        Width = 48,
-                        Height = 48,
-                        Padding = new Thickness(0),
-                        Style = (Style)Application.Current.Resources["PillButtonStyle"],
-                        VerticalAlignment = VerticalAlignment.Stretch
-                    };
-                    ToolTipService.SetToolTip(cog, "Advanced settings");
-                    cog.Click += AdvancedSettingsCog_Click;
-                    Grid.SetColumn(cog, 1);
-                    row.Children.Add(cog);
+                        var cog = new Button
+                        {
+                            Content = "\u2699",
+                            Tag = modeKey,
+                            FontSize = 20,
+                            Width = 48,
+                            Height = 48,
+                            Padding = new Thickness(0),
+                            Style = (Style)Application.Current.Resources["PillButtonStyle"],
+                            VerticalAlignment = VerticalAlignment.Stretch
+                        };
+                        ToolTipService.SetToolTip(cog, "Advanced settings");
+                        cog.Click += AdvancedSettingsCog_Click;
+                        Grid.SetColumn(cog, 1);
+                        row.Children.Add(cog);
+                    }
+                    else
+                    {
+                        btn.Margin = new Thickness(0, 0, 0, 0);
+                    }
 
                     EditCategoryContent.Children.Add(row);
                 }
@@ -987,10 +996,20 @@ namespace MistMapper.GameBarWidget
                 }
             }
 
-            // Deadzone sliders — use 0–50 integer % so UWP doesn't snap 0↔max
-            // (fractional Maximum with default SmallChange=1 only allows endpoints).
+            // Deadzone sliders — only modes that use absolute pad position.
+            // (As Mouse / Mouse Joystick ignore TrackpadDeadzone.)
             if (category.DeadzoneKeys.Length > 0)
             {
+                var showDeadzone = true;
+                if (category.Name == "Trackpads")
+                {
+                    var left = _modeValues.ContainsKey("left") ? _modeValues["left"] : "Off";
+                    var right = _modeValues.ContainsKey("right") ? _modeValues["right"] : "Off";
+                    showDeadzone = TrackpadModeUsesDeadzone(left) || TrackpadModeUsesDeadzone(right);
+                }
+
+                if (showDeadzone)
+                {
                 AddSectionHeader("Deadzone");
                 foreach (var key in category.DeadzoneKeys)
                 {
@@ -1019,6 +1038,7 @@ namespace MistMapper.GameBarWidget
                         if (!_sensitivityThrottle) { _sensitivityThrottle = true; _ = ThrottledSendSensitivity(); }
                     };
                     EditCategoryContent.Children.Add(slider);
+                }
                 }
             }
 

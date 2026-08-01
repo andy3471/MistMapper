@@ -45,43 +45,71 @@ sealed class TrackpadSurfaceProcessor
     }
 
     /// <summary>
-    /// Mouse-joystick "trackball" = slower return-to-center after a flick, not a
-    /// per-frame impulse loop (that pegs the stick and spins the camera).
+    /// Mouse-joystick return friction. Trackball Mode uses <see cref="TrackballFriction"/> for
+    /// linger after lift (and while touching). Off = snappy default return.
+    /// VerticalFrictionScale applies to Y only (same idea as mouse coast).
     /// </summary>
-    public static float GetMouseJoystickReturnFriction(ControllerProfile profile, InputFrame frame, float defaultFrictionPerSec)
+    public static (float FrictionX, float FrictionY) GetMouseJoystickReturnFriction(
+        ControllerProfile profile, InputFrame frame, float defaultFrictionPerSec)
     {
-        static float FromPad(
+        static (float Rate, float VertScale)? FromPad(
             TrackpadMode mode,
             TrackpadSurfaceSettings? settings,
             bool touching,
             float defaultFriction,
             Func<TrackballFriction, float> trackballReturnPerSec)
         {
-            if (mode != TrackpadMode.AsMouseJoystick || settings is not { TrackballMode: true })
-                return -1f;
-            // While still touching, keep a snappier return so resting on the pad centers.
+            if (mode != TrackpadMode.AsMouseJoystick || settings is null)
+                return null;
+
+            float vert = Math.Clamp(settings.VerticalFrictionScale, 0.1f, 5f);
+            if (!settings.TrackballMode)
+                return (defaultFriction, vert);
+
+            // Use the friction enum while touching too — previously Max(default, rate)
+            // made Low/Medium inert until lift, so the UI looked broken for mouse joystick.
+            float rate = trackballReturnPerSec(settings.TrackballFriction);
             if (touching)
-                return Math.Max(defaultFriction, trackballReturnPerSec(settings.TrackballFriction));
-            return trackballReturnPerSec(settings.TrackballFriction);
+                rate = Math.Max(rate, defaultFriction * 0.35f);
+            return (rate, vert);
         }
 
-        float left = FromPad(
+        var left = FromPad(
             profile.LeftTrackpad,
             profile.LeftTrackpadSettings,
             frame.GetDigital("LeftTrackpad"),
             defaultFrictionPerSec,
             MappingMath.MouseJoystickTrackballReturnPerSec);
-        float right = FromPad(
+        var right = FromPad(
             profile.RightTrackpad,
             profile.RightTrackpadSettings,
             frame.GetDigital("RightTrackpad"),
             defaultFrictionPerSec,
             MappingMath.MouseJoystickTrackballReturnPerSec);
-        if (left < 0 && right < 0)
-            return defaultFrictionPerSec;
-        if (left < 0) return right;
-        if (right < 0) return left;
-        return Math.Min(left, right);
+
+        if (left is null && right is null)
+            return (defaultFrictionPerSec, defaultFrictionPerSec);
+
+        float rate;
+        float vert;
+        if (left is null)
+        {
+            rate = right!.Value.Rate;
+            vert = right.Value.VertScale;
+        }
+        else if (right is null)
+        {
+            rate = left.Value.Rate;
+            vert = left.Value.VertScale;
+        }
+        else
+        {
+            // Slowest return / strongest vertical scale wins when both pads are MJ.
+            rate = Math.Min(left.Value.Rate, right.Value.Rate);
+            vert = Math.Max(left.Value.VertScale, right.Value.VertScale);
+        }
+
+        return (rate, rate * vert);
     }
 
     public void ApplyTrackpad(

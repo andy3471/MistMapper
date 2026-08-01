@@ -21,8 +21,8 @@ namespace MistMapper.GameBarWidget
 
         public sealed class TrackpadSettingsEntry
         {
-            public bool TrackballMode = true;
-            public string TrackballFriction = "Medium";
+            public bool TrackballMode;
+            public string TrackballFriction = "High";
             public double VerticalFrictionScale = 1;
             public double Smoothing = 20;
             public double RotationDegrees;
@@ -249,8 +249,8 @@ namespace MistMapper.GameBarWidget
                 return;
 
             var obj = state.GetNamedObject(key);
-            target.TrackballMode = obj.GetNamedBoolean("trackballMode", true);
-            target.TrackballFriction = obj.GetNamedString("trackballFriction", "Medium");
+            target.TrackballMode = obj.GetNamedBoolean("trackballMode", false);
+            target.TrackballFriction = obj.GetNamedString("trackballFriction", "High");
             target.VerticalFrictionScale = obj.GetNamedNumber("verticalFrictionScale", 1);
             target.Smoothing = obj.GetNamedNumber("smoothing", 20);
             target.RotationDegrees = obj.GetNamedNumber("rotationDegrees", 0);
