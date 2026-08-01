@@ -83,40 +83,32 @@ The host matches the foreground process **exe name** (optional path contains). M
 
 Keyboard injection uses `SendInput`. Some elevated games may not receive injected keys unless the host runs elevated too. Virtual Xbox output via VIIPER does not have that limitation.
 
-## 4. Xbox mode / FSE startup (Path 1 — supported default)
+## 4. Xbox mode / Full Screen Experience (HTPC)
 
-**Path 1 is the supported way** to run MistMapper inside Xbox Full Screen Experience. Prefer it over Path 2/3 unless Path 1 fails on your device.
+If this PC boots straight into **Xbox mode** (Full Screen Experience), MistMapper must start **with that session** so the virtual pad is ready before you launch a game. Game Bar is only needed when you want to remap.
 
-The host must start **inside** Xbox Full Screen Experience without opening Game Bar.
+### After running MistMapper Setup
 
-1. Enable **Start with Windows** in the tray (or run `scripts\install-startup.ps1`).  
-2. Open **Settings → Apps → Startup → MistMapper**.  
-3. Set startup to **Start at log in** (not “Start when exiting to desktop”).  
-4. Enter Xbox mode / FSE. The virtual pad should appear once VIIPER + controller are ready.
+1. Leave **Start MistMapper with Windows** checked in the installer (default).  
+2. Finish Setup. MistMapper registers both:
+   - normal Windows logon startup, and  
+   - Xbox mode **Start at log in** (so it is not deferred until you leave for desktop).  
+3. Restart the PC (or sign out and back in) while Xbox mode is enabled.
 
-Game Bar / the Widget exe is **optional** and only needed to remap.
+On boot, MistMapper starts in the tray and brings up VIIPER automatically. You do not need to start VIIPER by hand.
 
-A helper script is also written to:
+**If the pad is missing after reboot:** open **Settings → Apps → Startup** and confirm MistMapper is not **Off**. The UI may show “Start when exiting to desktop” even when Start at log in is actually set (known Windows bug). You can verify the real value in Registry Editor:
 
-`%AppData%\MistMapper\enable-fse-startup.ps1`
+`HKCU\Software\Microsoft\Windows\CurrentVersion\GamingConfiguration\Startup\Run` → `MistMapper` = `1`
 
-### Path 2 — AnyFSE (advanced)
+Tray → **Xbox / FSE startup help…** re-applies that value and opens Startup settings.
 
-If you use [AnyFSE](https://github.com/ashpynov/AnyFSE) as the FSE home app:
+### Advanced alternatives
 
-1. Set AnyFSE as home under Settings → Gaming → Full screen experience / Xbox mode.  
-2. Configure your preferred launcher (Xbox, Playnite, …).  
-3. Set **custom startup application** to `MistMapper.exe` (with `--tray`).
+Only if Start at log in still fails on your device:
 
-### Path 3 — FseHome wrapper (advanced / optional)
-
-`MistMapper.FseHome.exe` starts the host, then optionally a handoff launcher:
-
-```powershell
-.\MistMapper.FseHome.exe --launch "C:\Path\To\Playnite.FullscreenApp.exe"
-```
-
-To appear as a selectable FSE home app you must package it as a sideloaded MSIX with the community `gamingHome` capability (same approach as AnyFSE). This is unofficial and can break on Windows updates — prefer Path 1/2 unless Path 1 fails on your device.
+- **[AnyFSE](https://github.com/ashpynov/AnyFSE)** — use AnyFSE as the FSE home and keep Xbox (or Playnite, etc.) as its **launcher**. Add MistMapper only as a **custom startup** app so it runs in the background; it does not replace the Xbox app.  
+- **FseHome** — optional sideloaded home wrapper in this repo. Unofficial and can break on Windows updates.
 
 ## 5. Remapper / Game Bar widget
 
@@ -176,7 +168,7 @@ IPC: the widget writes requests into its package `LocalState`; the host watches 
 | Unlock | Bridge resumes |
 | Steam running | Bridge pauses and restores lizard mode |
 
-Native Windows **gamepad PIN** login expects a real Xbox-class pad present at LogonUI. Our virtual pad is created after sign-in, so it cannot drive cold-boot gamepad PIN. For console-style boots, use Windows auto sign-in + FSE Path 1.
+Native Windows **gamepad PIN** login expects a real Xbox-class pad present at LogonUI. Our virtual pad is created after sign-in, so it cannot drive cold-boot gamepad PIN. For console-style boots, use Windows auto sign-in + Xbox mode with MistMapper set to **Start at log in**.
 
 ## 7. Troubleshooting / Fix this
 
@@ -185,7 +177,7 @@ Native Windows **gamepad PIN** login expects a real Xbox-class pad present at Lo
 | `VIIPER unavailable` / red banner | Run Setup again with VIIPER checked, or `scripts\install-viiper.ps1 -Start`. Is usbip-win2 installed? Port 3242 free? |
 | Waiting for controller | USB/dongle connected? Steam fully exited? |
 | Double input | Close Steam, or leave **Pause when Steam is open** enabled in Game Bar Settings |
-| No pad in FSE | Startup set to **Start at log in** (Path 1 — supported). AnyFSE/FseHome are advanced fallbacks |
+| No pad in FSE | Re-run Setup with Start with Windows, or tray → Xbox / FSE startup help; confirm registry MistMapper=1 (see §4) |
 | Lock screen no mouse | Ensure host restored lizard (status `PausedLocked`) |
 | Keyboard binds ignored in game | Prefer Xbox binds via VIIPER; elevating the host may help SendInput |
 | Per-game profile not switching | Bind while the game is focused; ignored shells (Game Bar, etc.) |

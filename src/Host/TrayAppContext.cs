@@ -29,7 +29,8 @@ public sealed class TrayAppContext : ApplicationContext
         _ipc = new IpcServer(_profiles, _bridge, commands);
         _gameBarIpc = new GameBarFileIpcService(_profiles, _bridge, commands);
 
-        StartupRegistration.SetEnabled(_profiles.Document.StartWithWindows);
+        // Sync Run key from profile without rewriting when already correct (preserves FSE category).
+        StartupRegistration.SetEnabled(_profiles.StartWithWindows);
         StartupRegistration.WriteFseHelperScript(
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "MistMapper"));
@@ -65,7 +66,13 @@ public sealed class TrayAppContext : ApplicationContext
 
     ContextMenuStrip BuildMenu()
     {
-        var menu = new ContextMenuStrip();
+        var menu = new ContextMenuStrip
+        {
+            Font = SystemFonts.MenuFont
+        };
+        ApplyMenuDpi(menu);
+        menu.Opening += (_, _) => ApplyMenuDpi(menu);
+
         menu.Items.Add("Status…", null, (_, _) => OpenRemapper());
         menu.Items.Add("Toggle bridge", null, (_, _) => _bridge.SetEnabled(!_profiles.BridgeEnabled));
         var pauseSteam = new ToolStripMenuItem("Pause when Steam is running")
@@ -76,10 +83,6 @@ public sealed class TrayAppContext : ApplicationContext
         pauseSteam.CheckedChanged += (_, _) =>
             _profiles.AutoPauseWhenSteamRunning = pauseSteam.Checked;
         menu.Items.Add(pauseSteam);
-        menu.Opening += (_, _) =>
-        {
-            pauseSteam.Checked = _profiles.AutoPauseWhenSteamRunning;
-        };
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Remap in Game Bar (Win+G)", null, (_, _) =>
         {
@@ -93,11 +96,21 @@ public sealed class TrayAppContext : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
         var startup = new ToolStripMenuItem("Start with Windows")
         {
-            Checked = StartupRegistration.IsEnabled(),
+            Checked = _profiles.StartWithWindows,
             CheckOnClick = true
         };
-        startup.CheckedChanged += (_, _) => StartupRegistration.SetEnabled(startup.Checked);
+        startup.CheckedChanged += (_, _) =>
+        {
+            _profiles.StartWithWindows = startup.Checked;
+            StartupRegistration.SetEnabled(startup.Checked);
+        };
         menu.Items.Add(startup);
+        menu.Items.Add("Xbox / FSE startup help…", null, (_, _) => ShowFseStartupHelp());
+        menu.Opening += (_, _) =>
+        {
+            pauseSteam.Checked = _profiles.AutoPauseWhenSteamRunning;
+            startup.Checked = _profiles.StartWithWindows;
+        };
         menu.Items.Add(new ToolStripSeparator());
         if (!IsElevated())
         {
@@ -106,6 +119,32 @@ public sealed class TrayAppContext : ApplicationContext
         }
         menu.Items.Add("Exit", null, (_, _) => Exit());
         return menu;
+    }
+
+    static void ApplyMenuDpi(ContextMenuStrip menu)
+    {
+        var dpi = menu.DeviceDpi > 0 ? menu.DeviceDpi : 96;
+        var px = Math.Max(16, (16 * dpi + 48) / 96);
+        if (menu.ImageScalingSize.Width != px)
+            menu.ImageScalingSize = new Size(px, px);
+    }
+
+    static void ShowFseStartupHelp()
+    {
+        StartupRegistration.SetFseStartAtLogIn(true);
+        if (StartupRegistration.IsEnabled())
+            StartupRegistration.SetEnabled(true);
+
+        MessageBox.Show(
+            "Re-applied Xbox mode \"Start at log in\" for MistMapper.\n\n" +
+            "Settings → Apps → Startup may look wrong (known Windows bug).\n" +
+            "If the pad still does not appear after reboot, check Registry:\n" +
+            "HKCU\\...\\GamingConfiguration\\Startup\\Run\\MistMapper = 1\n\n" +
+            "Once MistMapper is running, it starts VIIPER automatically.",
+            "MistMapper — Xbox / FSE startup",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information);
+        StartupRegistration.OpenStartupAppsSettings();
     }
 
     void OnStatus(Shared.BridgeStatus status)

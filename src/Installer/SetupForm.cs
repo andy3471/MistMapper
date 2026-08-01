@@ -102,6 +102,16 @@ sealed class SetupForm : Form
         options.Controls.Add(_chkViiper);
         options.Controls.Add(_chkUsbip);
         options.Controls.Add(_chkStartup);
+
+        var fseHint = new Label
+        {
+            Text = "Xbox / FSE HTPC: Setup also registers Start at log in so MistMapper runs inside Xbox mode, not only after leaving to desktop.",
+            AutoSize = true,
+            MaximumSize = new Size(10000, 0),
+            ForeColor = Color.FromArgb(170, 176, 190),
+            Margin = new Padding(18, 0, 0, 10)
+        };
+        options.Controls.Add(fseHint);
         options.Controls.Add(_chkLaunch);
         root.Controls.Add(options, 0, 1);
 
@@ -244,6 +254,22 @@ sealed class SetupForm : Form
                 ? "Update completed successfully."
                 : "Installation completed successfully.");
             _close.Text = "Finish";
+
+            if (options.StartWithWindows)
+            {
+                var open = MessageBox.Show(
+                    this,
+                    "MistMapper is registered to start with Windows, including Xbox mode " +
+                    "\"Start at log in\".\n\n" +
+                    "Settings → Apps → Startup may look wrong (known Windows bug) even when " +
+                    "the setting stuck.\n\n" +
+                    "Open Startup apps settings to double-check?",
+                    "Xbox / FSE startup",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Information);
+                if (open == DialogResult.Yes)
+                    InstallEngine.OpenStartupAppsSettings();
+            }
         }
         catch (OperationCanceledException)
         {

@@ -116,7 +116,7 @@ Then Win+G, pin MistMapper, edit a layout, play.
 
 Profiles are stored in `%AppData%\MistMapper\profiles.json` and survive app upgrades.
 
-For Xbox mode / FSE: enable Start with Windows in the installer (or tray), and set MistMapper to **Start at log in** (the supported path). More detail in [docs/setup.md](docs/setup.md). Release cutting: [docs/release.md](docs/release.md).
+For Xbox mode / Full Screen Experience: leave **Start with Windows** checked in Setup (registers Start at log in for Xbox mode). Details: [docs/setup.md](docs/setup.md). Release cutting: [docs/release.md](docs/release.md).
 
 ### Prerequisites (manual install)
 

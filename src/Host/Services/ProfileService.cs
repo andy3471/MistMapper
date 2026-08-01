@@ -101,6 +101,21 @@ public sealed class ProfileService
         }
     }
 
+    public bool StartWithWindows
+    {
+        get { lock (_lock) return _doc.StartWithWindows; }
+        set
+        {
+            lock (_lock)
+            {
+                if (_doc.StartWithWindows == value) return;
+                _doc.StartWithWindows = value;
+                SaveUnlocked();
+            }
+            Changed?.Invoke();
+        }
+    }
+
     public IReadOnlyList<ControllerProfile> GetProfiles()
     {
         lock (_lock) return _doc.Profiles.Select(CloneProfile).ToList();

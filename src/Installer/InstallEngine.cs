@@ -192,7 +192,10 @@ sealed class InstallEngine
             _log("Installed to: " + InstallRoot);
             _log("Press Win+G → Widgets → pin MistMapper.");
             if (options.StartWithWindows)
-                _log("Auto-launch registered (Start with Windows).");
+            {
+                _log("Windows logon Run key registered.");
+                _log("Xbox mode Start at log in registered (GamingConfiguration).");
+            }
         }
         finally
         {
@@ -512,22 +515,96 @@ sealed class InstallEngine
 
     void EnableStartup()
     {
-        _log("Registering Start with Windows…");
+        _log("Registering Windows logon (Run key)…");
         using var key = Registry.CurrentUser.CreateSubKey(
             @"Software\Microsoft\Windows\CurrentVersion\Run");
         key.DeleteValue("SteamControllerBridge", throwOnMissingValue: false);
-        key.SetValue("MistMapper", $"\"{HostExePath}\" --tray");
+        var desired = $"\"{HostExePath}\" --tray";
+        var current = key.GetValue("MistMapper") as string;
+        if (!string.Equals(current, desired, StringComparison.OrdinalIgnoreCase))
+            key.SetValue("MistMapper", desired);
+        else
+            _log("Run key already correct (left unchanged).");
 
-        // Keep profile flag in sync when host first runs; also write AppData hint.
+        EnableFseStartAtLogIn();
+        SyncStartWithWindowsProfile(enabled: true);
+    }
+
+    /// <summary>
+    /// Xbox mode whitelist so MistMapper starts inside FSE, not only after leaving to desktop.
+    /// DWORD 1 under GamingConfiguration\Startup\Run = "Start at log in".
+    /// </summary>
+    void EnableFseStartAtLogIn()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\GamingConfiguration\Startup\Run");
+            key.SetValue("MistMapper", 1, RegistryValueKind.DWord);
+            _log("Registered Xbox mode Start at log in (GamingConfiguration).");
+        }
+        catch (Exception ex)
+        {
+            _log("Could not set Xbox mode Start at log in: " + ex.Message);
+            _log("Fallback: Settings → Apps → Startup → MistMapper → Start at log in");
+        }
+    }
+
+    void SyncStartWithWindowsProfile(bool enabled)
+    {
         try
         {
             var profiles = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "MistMapper", "profiles.json");
-            // Host creates this; we only ensure Run key here.
-            _ = profiles;
+            if (!File.Exists(profiles))
+                return;
+
+            var json = File.ReadAllText(profiles);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            using var stream = new MemoryStream();
+            using (var writer = new System.Text.Json.Utf8JsonWriter(stream, new System.Text.Json.JsonWriterOptions { Indented = true }))
+            {
+                writer.WriteStartObject();
+                var wrote = false;
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                {
+                    if (prop.NameEquals("startWithWindows") || prop.NameEquals("StartWithWindows"))
+                    {
+                        writer.WriteBoolean(prop.Name, enabled);
+                        wrote = true;
+                    }
+                    else
+                    {
+                        prop.WriteTo(writer);
+                    }
+                }
+                if (!wrote)
+                    writer.WriteBoolean("startWithWindows", enabled);
+                writer.WriteEndObject();
+            }
+            File.WriteAllBytes(profiles, stream.ToArray());
         }
-        catch { /* ignore */ }
+        catch (Exception ex)
+        {
+            _log("Could not sync profiles.json StartWithWindows: " + ex.Message);
+        }
+    }
+
+    internal static void OpenStartupAppsSettings()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "ms-settings:startupapps",
+                UseShellExecute = true
+            });
+        }
+        catch
+        {
+            // Settings URI may be unavailable.
+        }
     }
 
     void CreateShortcuts()
