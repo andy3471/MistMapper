@@ -262,10 +262,9 @@ public sealed partial class BridgeService : IDisposable
                     _viiperDep.Detail = ensured.Detail;
                     if (!ensured.Ok)
                     {
-                        TearDownVirtualOnly();
-                        ReleaseAllMappers();
+                        // Warm-up / cold boot: keep probing; avoid tearing down on every poll.
                         PublishStatus(BridgeRunState.Error, _viiperDep.Detail);
-                        await Task.Delay(2000, ct);
+                        await Task.Delay(1000, ct);
                         continue;
                     }
                 }
@@ -313,7 +312,12 @@ public sealed partial class BridgeService : IDisposable
                     if (slot.Viiper is null || !slot.Viiper.IsConnected)
                     {
                         if (!await EnsureViiperForSlotAsync(slot, ct))
+                        {
+                            // usbip VHCI attach is often slow right after FSE logon — back off
+                            // instead of hot-spinning ConnectAsync (toggle-bridge used to "fix" this).
+                            await Task.Delay(1500, ct);
                             continue;
+                        }
                     }
 
                     anyViiper = true;

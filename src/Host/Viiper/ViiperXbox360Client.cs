@@ -111,12 +111,24 @@ public sealed class ViiperXbox360Client : IViiperClient
             await _deviceStream.WriteAsync(handshake, ct).ConfigureAwait(false);
             await _deviceStream.FlushAsync(ct).ConfigureAwait(false);
 
-            TryUsbipAttach($"{_busId}-{_devId}");
-            if (!string.IsNullOrEmpty(LastError) &&
-                LastError.StartsWith("usbip", StringComparison.OrdinalIgnoreCase))
+            // VHCI can lag on cold Xbox-mode boots — retry attach a few times.
+            string? attachError = null;
+            for (var attempt = 0; attempt < 5; attempt++)
             {
-                throw new InvalidOperationException(LastError);
+                TryUsbipAttach($"{_busId}-{_devId}");
+                if (string.IsNullOrEmpty(LastError) ||
+                    !LastError.StartsWith("usbip", StringComparison.OrdinalIgnoreCase))
+                {
+                    attachError = null;
+                    break;
+                }
+
+                attachError = LastError;
+                await Task.Delay(500 * (attempt + 1), ct).ConfigureAwait(false);
             }
+
+            if (attachError is not null)
+                throw new InvalidOperationException(attachError);
 
             // Rumble CTS must outlive the connect timeout token — linking them caused
             // IsConnected to flip false as soon as ConnectAsync returned, so the bridge

@@ -278,7 +278,9 @@ public sealed partial class BridgeService
             slot.UnhookRumble();
             try { slot.Viiper?.Dispose(); } catch { /* ignore */ }
             slot.Viiper = null;
-            _viiperDep.Ok = false;
+            // Leave _viiperDep.Ok alone when the API is up — device/usbip attach can lag on
+            // cold Xbox-mode boots. Marking Ok=false made the loop skip reconnect and sit in
+            // "VIIPER unavailable" until the user toggled the bridge.
             var hint = ex.Message.Contains("usbip", StringComparison.OrdinalIgnoreCase)
                 ? " Install usbip-win2 and ensure usbip.exe is on PATH."
                 : "";

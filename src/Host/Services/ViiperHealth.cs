@@ -15,6 +15,14 @@ public sealed class ViiperHealth : IViiperHealth
     public const string Host = "127.0.0.1";
     public const int Port = 3242;
 
+    /// <summary>Do not spawn another viiper.exe more often than this.</summary>
+    static readonly TimeSpan StartThrottle = TimeSpan.FromSeconds(20);
+
+    /// <summary>How long to wait for :3242 after spawning viiper.exe (cold FSE boots can be slow).</summary>
+    static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(25);
+
+    static readonly TimeSpan ReadyPollInterval = TimeSpan.FromMilliseconds(500);
+
     static DateTime _lastStartAttempt = DateTime.MinValue;
 
     public static string DefaultInstallPath =>
@@ -52,28 +60,36 @@ public sealed class ViiperHealth : IViiperHealth
         catch (Exception ex)
         {
             return (false,
-                "VIIPER unavailable. Run scripts\\install-viiper.ps1 -Start (usbip-win2 required). " +
+                "VIIPER unavailable. Install via MistMapper Setup (usbip-win2 required). " +
                 ex.Message);
         }
     }
 
     /// <summary>
-    /// If the API is down and a local install exists, start <c>viiper server</c> (throttled).
-    /// Does not download VIIPER — use scripts/install-viiper.ps1 for that (GPL-3.0).
+    /// If the API is down and a local install exists, start <c>viiper server</c> (throttled)
+    /// and wait until :3242 answers (or timeout). Does not download VIIPER.
     /// </summary>
     public async Task<(bool Ok, string Detail)> EnsureRunningAsync(CancellationToken ct = default)
     {
         var probe = await ProbeAsync(ct);
         if (probe.Ok) return probe;
 
-        if ((DateTime.UtcNow - _lastStartAttempt).TotalSeconds < 15)
-            return (false, probe.Detail + " (start throttled)");
-
         var exe = ResolveExecutable();
         if (exe is null)
         {
             return (false,
-                "VIIPER not installed. Run: powershell -ExecutionPolicy Bypass -File .\\scripts\\install-viiper.ps1 -Start");
+                "VIIPER not installed. Re-run MistMapper Setup and keep the VIIPER option checked.");
+        }
+
+        var sinceStart = DateTime.UtcNow - _lastStartAttempt;
+        if (sinceStart < StartThrottle)
+        {
+            // Already spawned recently — keep polling; do not return "throttled" immediately
+            // or the bridge loop will sit in Error until the user toggles the bridge.
+            var waited = await WaitUntilReadyAsync(ct);
+            if (waited.Ok)
+                return (true, $"VIIPER ready ({exe})");
+            return (false, waited.Detail + " (waiting for recently started VIIPER)");
         }
 
         _lastStartAttempt = DateTime.UtcNow;
@@ -84,7 +100,6 @@ public sealed class ViiperHealth : IViiperHealth
             {
                 FileName = exe,
                 // Disable auto-attach: usbip VHCI discovery is flaky; host can still feed the device stream.
-                // Games need a working VHCI attach separately (see docs).
                 Arguments = "server --api.auto-attach-local-client=false",
                 WorkingDirectory = Path.GetDirectoryName(exe)!,
                 UseShellExecute = false,
@@ -105,16 +120,31 @@ public sealed class ViiperHealth : IViiperHealth
             return (false, $"Failed to start VIIPER at {exe}: {ex.Message}");
         }
 
-        for (int i = 0; i < 20 && !ct.IsCancellationRequested; i++)
-        {
-            await Task.Delay(250, ct);
-            probe = await ProbeAsync(ct);
-            if (probe.Ok)
-                return (true, $"Started local VIIPER ({exe})");
-        }
+        probe = await WaitUntilReadyAsync(ct);
+        if (probe.Ok)
+            return (true, $"Started local VIIPER ({exe})");
 
         return (false,
             "Started viiper.exe but API :3242 did not come up. Is usbip-win2 installed? " + probe.Detail);
+    }
+
+    async Task<(bool Ok, string Detail)> WaitUntilReadyAsync(CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow + ReadyTimeout;
+        (bool Ok, string Detail) last = (false, "VIIPER not responding yet");
+        while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
+        {
+            last = await ProbeAsync(ct);
+            if (last.Ok)
+                return last;
+            var remaining = deadline - DateTime.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+                break;
+            var delay = remaining < ReadyPollInterval ? remaining : ReadyPollInterval;
+            try { await Task.Delay(delay, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+        }
+        return last;
     }
 
     public static string? ResolveExecutable()
@@ -122,7 +152,6 @@ public sealed class ViiperHealth : IViiperHealth
         var local = DefaultInstallPath;
         if (File.Exists(local)) return local;
 
-        // PATH
         var path = Environment.GetEnvironmentVariable("PATH") ?? "";
         foreach (var dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
